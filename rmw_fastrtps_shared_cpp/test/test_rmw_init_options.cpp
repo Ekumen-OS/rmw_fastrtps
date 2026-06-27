@@ -23,6 +23,7 @@
 #include "osrf_testing_tools_cpp/scope_exit.hpp"
 
 #include "rmw_fastrtps_shared_cpp/rmw_init.hpp"
+#include "rmw_fastrtps_shared_cpp/rmw_init_options_impl.hpp"
 
 using rmw_fastrtps_shared_cpp::rmw_init_options_init;
 using rmw_fastrtps_shared_cpp::rmw_init_options_copy;
@@ -188,13 +189,12 @@ static void * failing_allocate(size_t size, void * state)
 }
 
 TEST(RMWInitOptionsTest, bad_alloc_on_copy) {
-  rcutils_allocator_t failing_allocator = rcutils_get_default_allocator();
-  failing_allocator.allocate = failing_allocate;
+  rcutils_allocator_t normal_allocator = rcutils_get_default_allocator();
 
   rmw_init_options_t preset_options = rmw_get_zero_initialized_init_options();
   ASSERT_EQ(
     RMW_RET_OK,
-    rmw_init_options_init(some_identifier, &preset_options, failing_allocator)) <<
+    rmw_init_options_init(some_identifier, &preset_options, normal_allocator)) <<
     rcutils_get_error_string().str;
   OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT(
   {
@@ -203,8 +203,14 @@ TEST(RMWInitOptionsTest, bad_alloc_on_copy) {
       rcutils_get_error_string().str;
     rcutils_reset_error();
   });
-  preset_options.enclave = rcutils_strdup("/test", rcutils_get_default_allocator());
+  preset_options.enclave = rcutils_strdup("/test", normal_allocator);
   ASSERT_TRUE(preset_options.enclave != nullptr);
+
+  // Replace src allocator with a failing one so the copy fails on its first
+  // allocation attempt (enclave strdup).
+  rcutils_allocator_t failing_allocator = normal_allocator;
+  failing_allocator.allocate = failing_allocate;
+  preset_options.allocator = failing_allocator;
 
   rmw_init_options_t options = rmw_get_zero_initialized_init_options();
   EXPECT_EQ(
@@ -239,4 +245,79 @@ TEST(RMWInitOptionsTest, fini_w_invalid_args_fails) {
     RMW_RET_INCORRECT_RMW_IMPLEMENTATION,
     rmw_init_options_fini(another_identifier, &options));
   rcutils_reset_error();
+}
+
+TEST(RMWInitOptionsTest, default_backend_is_legacy) {
+  rmw_init_options_t options = rmw_get_zero_initialized_init_options();
+  rcutils_allocator_t allocator = rcutils_get_default_allocator();
+
+  ASSERT_EQ(RMW_RET_OK, rmw_init_options_init(some_identifier, &options, allocator)) <<
+    rcutils_get_error_string().str;
+  OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT(
+  {
+    rcutils_reset_error();
+    EXPECT_EQ(RMW_RET_OK, rmw_init_options_fini(some_identifier, &options)) <<
+      rcutils_get_error_string().str;
+    rcutils_reset_error();
+  });
+
+  ASSERT_NE(nullptr, options.impl);
+  auto impl = static_cast<const rmw_init_options_impl_s *>(options.impl);
+  EXPECT_EQ(SerializationBackend::FASTCDR, impl->backend);
+}
+
+TEST(RMWInitOptionsTest, backend_can_be_set_and_copied) {
+  rmw_init_options_t options = rmw_get_zero_initialized_init_options();
+  rcutils_allocator_t allocator = rcutils_get_default_allocator();
+
+  ASSERT_EQ(RMW_RET_OK, rmw_init_options_init(some_identifier, &options, allocator)) <<
+    rcutils_get_error_string().str;
+  OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT(
+  {
+    rcutils_reset_error();
+    EXPECT_EQ(RMW_RET_OK, rmw_init_options_fini(some_identifier, &options)) <<
+      rcutils_get_error_string().str;
+    rcutils_reset_error();
+  });
+
+  // Change backend to XCDR_BUFFERS
+  ASSERT_NE(nullptr, options.impl);
+  auto impl = static_cast<rmw_init_options_impl_s *>(options.impl);
+  impl->backend = SerializationBackend::XCDR_BUFFERS;
+
+  // Copy should preserve XCDR_BUFFERS
+  rmw_init_options_t copy = rmw_get_zero_initialized_init_options();
+  ASSERT_EQ(RMW_RET_OK, rmw_init_options_copy(some_identifier, &options, &copy)) <<
+    rcutils_get_error_string().str;
+  OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT(
+  {
+    rcutils_reset_error();
+    EXPECT_EQ(RMW_RET_OK, rmw_init_options_fini(some_identifier, &copy)) <<
+      rcutils_get_error_string().str;
+    rcutils_reset_error();
+  });
+
+  ASSERT_NE(nullptr, copy.impl);
+  auto copy_impl = static_cast<const rmw_init_options_impl_s *>(copy.impl);
+  EXPECT_EQ(SerializationBackend::XCDR_BUFFERS, copy_impl->backend);
+
+  // Verify source still has XCDR_BUFFERS (copy was independent)
+  EXPECT_EQ(SerializationBackend::XCDR_BUFFERS, impl->backend);
+}
+
+TEST(RMWInitOptionsTest, copy_with_null_impl_src_is_allowed) {
+  rcutils_allocator_t allocator = rcutils_get_default_allocator();
+  rmw_init_options_t src = rmw_get_zero_initialized_init_options();
+  // Setup src without an impl by bypassing the normal init path.
+  // Simulates a scenario where impl is nullptr.
+  src.implementation_identifier = some_identifier;
+  src.allocator = allocator;
+  src.impl = nullptr;
+  src.enclave = nullptr;
+
+  rmw_init_options_t dst = rmw_get_zero_initialized_init_options();
+  EXPECT_EQ(
+    RMW_RET_OK,
+    rmw_init_options_copy(some_identifier, &src, &dst));
+  EXPECT_EQ(nullptr, dst.impl);
 }

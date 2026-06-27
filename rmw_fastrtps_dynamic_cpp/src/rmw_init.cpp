@@ -37,6 +37,7 @@
 #include "rmw_fastrtps_shared_cpp/publisher.hpp"
 #include "rmw_fastrtps_shared_cpp/rmw_context_impl.hpp"
 #include "rmw_fastrtps_shared_cpp/rmw_init.hpp"
+#include "rmw_fastrtps_shared_cpp/rmw_init_options_impl.hpp"
 #include "rmw_fastrtps_shared_cpp/subscription.hpp"
 
 #include "rosidl_typesupport_cpp/message_type_support.hpp"
@@ -111,6 +112,13 @@ rmw_init(const rmw_init_options_t * options, rmw_context_t * context)
     [context]() {delete context->impl;});
 
   context->impl->is_shutdown = false;
+
+  // Propagate backend from init options to context impl
+  if (nullptr != options->impl) {
+    auto init_opts_impl = static_cast<const rmw_init_options_impl_s *>(options->impl);
+    context->impl->backend_mode = init_opts_impl->backend;
+  }
+
   context->options = rmw_get_zero_initialized_init_options();
   rmw_ret_t ret = rmw_init_options_copy(options, &context->options);
   if (RMW_RET_OK != ret) {

@@ -17,6 +17,10 @@
 
 #include <mutex>
 
+#include "rmw/rmw.h"
+
+#include "rmw_fastrtps_shared_cpp/rmw_init_options_impl.hpp"
+
 // Definition of struct rmw_context_impl_s as declared in rmw/init.h
 struct rmw_context_impl_s
 {
@@ -30,6 +34,18 @@ struct rmw_context_impl_s
   uint64_t count;
   /// Shutdown flag.
   bool is_shutdown;
+  /// Selected serialization backend.
+  SerializationBackend backend_mode{SerializationBackend::FASTCDR};
 };
+
+/// Return true if the context is using the XCDR serialization backend.
+inline bool
+is_xcdr_backend(const rmw_context_t * context)
+{
+  if (nullptr == context || nullptr == context->impl) {
+    return false;
+  }
+  return SerializationBackend::XCDR_BUFFERS == context->impl->backend_mode;
+}
 
 #endif  // RMW_FASTRTPS_SHARED_CPP__RMW_CONTEXT_IMPL_HPP_

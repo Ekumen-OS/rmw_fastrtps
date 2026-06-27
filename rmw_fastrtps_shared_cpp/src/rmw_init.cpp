@@ -22,6 +22,8 @@
 #include "rmw/impl/cpp/macros.hpp"
 #include "rmw/init_options.h"
 
+#include "rmw_fastrtps_shared_cpp/rmw_init_options_impl.hpp"
+
 namespace rmw_fastrtps_shared_cpp
 {
 
@@ -45,7 +47,22 @@ rmw_init_options_init(
   init_options->security_options = rmw_get_default_security_options();
   init_options->localhost_only = RMW_LOCALHOST_ONLY_DEFAULT;
   init_options->discovery_options = rmw_get_zero_initialized_discovery_options();
-  return rmw_discovery_options_init(&(init_options->discovery_options), 0, &allocator);
+  rmw_ret_t ret = rmw_discovery_options_init(&(init_options->discovery_options), 0, &allocator);
+  if (RMW_RET_OK != ret) {
+    return ret;
+  }
+
+  // Allocate middleware-specific init options
+  auto impl = static_cast<rmw_init_options_impl_s *>(
+    allocator.allocate(sizeof(rmw_init_options_impl_s), allocator.state));
+  if (nullptr == impl) {
+    RMW_SET_ERROR_MSG("failed to allocate rmw_init_options_impl_s");
+    rmw_discovery_options_fini(&(init_options->discovery_options));
+    return RMW_RET_BAD_ALLOC;
+  }
+  impl->backend = SerializationBackend::FASTCDR;
+  init_options->impl = impl;
+  return RMW_RET_OK;
 }
 
 rmw_ret_t
@@ -93,6 +110,25 @@ rmw_init_options_copy(
     // Error already set
     return ret;
   }
+
+  // Deep-copy the middleware-specific init options
+  if (nullptr != src->impl) {
+    auto src_impl = static_cast<const rmw_init_options_impl_s *>(src->impl);
+    auto dst_impl = static_cast<rmw_init_options_impl_s *>(
+      allocator.allocate(sizeof(rmw_init_options_impl_s), allocator.state));
+    if (nullptr == dst_impl) {
+      allocator.deallocate(tmp.enclave, allocator.state);
+      rmw_security_options_fini(&tmp.security_options, &allocator);
+      rmw_discovery_options_fini(&tmp.discovery_options);
+      RMW_SET_ERROR_MSG("failed to allocate rmw_init_options_impl_s copy");
+      return RMW_RET_BAD_ALLOC;
+    }
+    dst_impl->backend = src_impl->backend;
+    tmp.impl = dst_impl;
+  } else {
+    tmp.impl = nullptr;
+  }
+
   *dst = tmp;
   return RMW_RET_OK;
 }
@@ -121,6 +157,13 @@ rmw_init_options_fini(const char * identifier, rmw_init_options_t * init_options
   }
 
   ret = rmw_discovery_options_fini(&init_options->discovery_options);
+
+  // Free the middleware-specific init options
+  if (nullptr != init_options->impl) {
+    allocator->deallocate(init_options->impl, allocator->state);
+    init_options->impl = nullptr;
+  }
+
   *init_options = rmw_get_zero_initialized_init_options();
   return ret;
 }
