@@ -43,6 +43,8 @@ find_package(rmw_dds_common REQUIRED)
 find_package(rosidl_runtime_c REQUIRED)
 find_package(rosidl_typesupport_introspection_c REQUIRED)
 find_package(rosidl_typesupport_introspection_cpp REQUIRED)
+find_package(rosidl_typesupport_xcdr_c REQUIRED)
+find_package(rosidl_typesupport_xcdr_cpp REQUIRED)
 find_package(tracetools REQUIRED)
 
 find_package(fastrtps_cmake_module REQUIRED)
@@ -97,6 +99,7 @@ add_library(rmw_fastrtps_shared_cpp
   src/subscription.cpp
   src/time_utils.cpp
   src/TypeSupport_impl.cpp
+  src/XcdrTypeSupport.cpp
   src/utils.cpp
 )
 target_include_directories(rmw_fastrtps_shared_cpp
@@ -116,6 +119,8 @@ target_link_libraries(rmw_fastrtps_shared_cpp PUBLIC
 target_link_libraries(rmw_fastrtps_shared_cpp PRIVATE
   rosidl_typesupport_introspection_c::rosidl_typesupport_introspection_c
   rosidl_typesupport_introspection_cpp::rosidl_typesupport_introspection_cpp
+  rosidl_typesupport_xcdr_c::rosidl_typesupport_xcdr_c
+  rosidl_typesupport_xcdr_cpp::rosidl_typesupport_xcdr_cpp
   tracetools::tracetools
 )
 
@@ -131,7 +136,7 @@ ament_export_libraries(rmw_fastrtps_shared_cpp)
 # Export modern CMake targets
 ament_export_targets(rmw_fastrtps_shared_cpp)
 
-ament_export_dependencies(fastcdr rcpputils rcutils rmw rmw_dds_common rosidl_dynamic_typesupport)
+ament_export_dependencies(fastcdr rcpputils rcutils rmw rmw_dds_common rosidl_dynamic_typesupport rosidl_typesupport_xcdr_cpp)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

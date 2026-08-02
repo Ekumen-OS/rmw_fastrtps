@@ -49,6 +49,8 @@ find_package(rosidl_dynamic_typesupport_fastrtps REQUIRED)
 find_package(rosidl_runtime_c REQUIRED)
 find_package(rosidl_typesupport_fastrtps_c REQUIRED)
 find_package(rosidl_typesupport_fastrtps_cpp REQUIRED)
+find_package(rosidl_typesupport_xcdr_c REQUIRED)
+find_package(rosidl_typesupport_xcdr_cpp REQUIRED)
 
 include_directories(include)
 
@@ -93,6 +95,7 @@ add_library(rmw_fastrtps_cpp
   src/rmw_trigger_guard_condition.cpp
   src/rmw_wait.cpp
   src/rmw_wait_set.cpp
+  src/serialization_backend.cpp
   src/serialization_format.cpp
   src/subscription.cpp
   src/type_support_common.cpp
@@ -113,6 +116,8 @@ target_link_libraries(rmw_fastrtps_cpp PRIVATE
   rosidl_dynamic_typesupport::rosidl_dynamic_typesupport
   rosidl_dynamic_typesupport_fastrtps::rosidl_dynamic_typesupport_fastrtps
   rosidl_typesupport_fastrtps_c::rosidl_typesupport_fastrtps_c
+  rosidl_typesupport_xcdr_c::rosidl_typesupport_xcdr_c
+  rosidl_typesupport_xcdr_cpp::rosidl_typesupport_xcdr_cpp
   tracetools::tracetools
 )
 
@@ -127,7 +132,7 @@ target_compile_definitions(${PROJECT_NAME}
 ament_export_include_directories("include/${PROJECT_NAME}")
 ament_export_libraries(rmw_fastrtps_cpp)
 
-ament_export_dependencies(fastcdr rmw rmw_fastrtps_shared_cpp rosidl_runtime_c rosidl_typesupport_fastrtps_cpp)
+ament_export_dependencies(fastcdr rmw rmw_fastrtps_shared_cpp rosidl_runtime_c rosidl_typesupport_fastrtps_cpp rosidl_typesupport_xcdr_cpp)
 
 register_rmw_implementation(
   "c:rosidl_typesupport_c:rosidl_typesupport_fastrtps_c:rosidl_typesupport_introspection_c"

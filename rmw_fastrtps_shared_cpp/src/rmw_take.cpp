@@ -34,6 +34,7 @@
 #include "rmw_fastrtps_shared_cpp/subscription.hpp"
 #include "rmw_fastrtps_shared_cpp/TypeSupport.hpp"
 #include "rmw_fastrtps_shared_cpp/utils.hpp"
+#include "rmw_fastrtps_shared_cpp/XcdrTypeSupport.hpp"
 
 #include "rosidl_dynamic_typesupport/types.h"
 
@@ -576,7 +577,19 @@ __init_subscription_for_loans(
 {
   auto info = static_cast<CustomSubscriberInfo *>(subscription->data);
   const auto & qos = info->data_reader_->get_qos();
-  subscription->can_loan_messages = info->type_support_->is_plain();
+
+  auto * type_ptr = info->type_support_.get();
+  auto * xcdr_ts = dynamic_cast<rmw_fastrtps_shared_cpp::XcdrTypeSupport *>(type_ptr);
+  if (nullptr != xcdr_ts) {
+    // XCDR-backed subscription: advertise loan capability whenever the type
+    // supports typed views (the codegen emits cast_message for types with
+    // constraints support).  This includes unbounded types: their non-plain
+    // loan path casts the payload into a view holder inside deserialize().
+    // Types without cast_message fall back to copy take.
+    subscription->can_loan_messages = xcdr_ts->supports_loans();
+  } else {
+    subscription->can_loan_messages = type_ptr->is_plain();
+  }
   if (subscription->can_loan_messages) {
     const auto & allocation_qos = qos.reader_resource_limits().outstanding_reads_allocation;
     info->loan_manager_ = std::make_shared<LoanManager>(allocation_qos);

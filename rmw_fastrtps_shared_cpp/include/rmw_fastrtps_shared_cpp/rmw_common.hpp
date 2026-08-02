@@ -177,6 +177,7 @@ __rmw_borrow_loaned_message(
   const char * identifier,
   const rmw_publisher_t * publisher,
   const rosidl_message_type_support_t * type_support,
+  const rosidl_message_type_constraints_t * type_constraints,
   void ** ros_message);
 
 RMW_FASTRTPS_SHARED_CPP_PUBLIC

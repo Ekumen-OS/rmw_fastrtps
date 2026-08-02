@@ -31,6 +31,12 @@
 #include "rmw_fastrtps_shared_cpp/rmw_common.hpp"
 #include "rmw_fastrtps_shared_cpp/rmw_context_impl.hpp"
 #include "rmw_fastrtps_shared_cpp/TypeSupport.hpp"
+#include "rmw_fastrtps_shared_cpp/XcdrTypeSupport.hpp"
+
+#include "rosidl_typesupport_xcdr_c/message_type_support.h"
+#include "rosidl_typesupport_xcdr_cpp/message_type_support.hpp"
+
+#include "rosidl_runtime_cpp/experimental/memory.hpp"
 
 #include "time_utils.hpp"
 
@@ -159,6 +165,7 @@ __rmw_borrow_loaned_message(
   const char * identifier,
   const rmw_publisher_t * publisher,
   const rosidl_message_type_support_t * type_support,
+  const rosidl_message_type_constraints_t * type_constraints,
   void ** ros_message)
 {
   RMW_CHECK_ARGUMENT_FOR_NULL(publisher, RMW_RET_INVALID_ARGUMENT);
@@ -177,8 +184,105 @@ __rmw_borrow_loaned_message(
   }
 
   auto info = static_cast<CustomPublisherInfo *>(publisher->data);
-  if (!info->data_writer_->loan_sample(*ros_message)) {
-    return RMW_RET_ERROR;
+
+  // Resolve the XCDR type support from the publisher.
+  auto * xcdr_ts = dynamic_cast<rmw_fastrtps_shared_cpp::XcdrTypeSupport *>(
+    info->type_support_.get());
+
+  if (xcdr_ts) {
+    // -- XCDR backend: typed-view loan --
+    std::shared_ptr<rosidl_message_type_support_t> loan_handle{nullptr};
+
+    if (type_constraints) {
+      // Validate against publisher baseline (if any).
+      const rosidl_message_type_support_t * ts_handle = xcdr_ts->get_effective_handle();
+      const rosidl_message_type_constraints_t * baseline =
+        ts_handle ? rosidl_typesupport_xcdr_c_get_constraints(ts_handle) : nullptr;
+      if (!rosidl_typesupport_xcdr_cpp::compare_constraints(
+          ts_handle, type_constraints, baseline))
+      {
+        RMW_SET_ERROR_MSG(
+          "per-loan constraints exceed publisher-wide bounds; "
+          "set looser constraints at create_publisher time instead");
+        return RMW_RET_CONSTRAINTS_HIT;
+      }
+
+      // Build a per-loan constrained handle from the base handle.
+      const rosidl_message_type_support_t * base = xcdr_ts->get_base_handle();
+      if (nullptr == base) {
+        RMW_SET_ERROR_MSG("no base XCDR handle for per-loan constraints");
+        return RMW_RET_ERROR;
+      }
+      loan_handle = rosidl_typesupport_xcdr_cpp::create_constrained_message_type_support(
+        base, type_constraints);
+      if (!loan_handle) {
+        rcutils_reset_error();
+        RMW_SET_ERROR_MSG("failed to create per-loan constrained handle");
+        return RMW_RET_ERROR;
+      }
+    } else {
+      // Publisher-wide constraints (or fixed-size without explicit constraints).
+      const rosidl_message_type_support_t * eff = xcdr_ts->get_effective_handle();
+      loan_handle = std::shared_ptr<rosidl_message_type_support_t>(
+        const_cast<rosidl_message_type_support_t *>(eff),
+        [](rosidl_message_type_support_t *) {});
+    }
+
+    // Compute expected data size.  Zero means no typed view is possible.
+    size_t expected_data_size =
+      XcdrTypeSupport::get_expected_data_size_for_handle(loan_handle.get());
+    if (0 == expected_data_size) {
+      RMW_SET_ERROR_MSG(
+        "XCDR type does not support typed loan (unbounded)");
+      return RMW_RET_ERROR;
+    }
+
+    // Loan a raw blob from Fast DDS.
+    void * blob = nullptr;
+    if (!info->data_writer_->loan_sample(
+        blob,
+        eprosima::fastdds::dds::DataWriter::LoanInitializationKind::NO_LOAN_INITIALIZATION))
+    {
+      return RMW_RET_ERROR;
+    }
+
+    // Construct the typed message view at the very start of the payload
+    // buffer (blob - representation_header_size).  The XCDR block (its own
+    // CDR header + fields) must occupy payload.data[0..] so that regular
+    // copy-take deserialization sees the same layout as the normal
+    // serialize path.
+    void * typed_base = static_cast<char *>(blob) -
+      eprosima::fastrtps::rtps::SerializedPayload_t::representation_header_size;
+    rosidl_runtime_cpp::MemoryRegion<void> storage(typed_base, expected_data_size);
+    void * message = nullptr;
+    rcutils_ret_t ret = rosidl_typesupport_xcdr_cpp::construct_message_at(
+      loan_handle.get(), storage, &message);
+    if (RCUTILS_RET_OK != ret || nullptr == message) {
+      info->data_writer_->discard_loan(blob);
+      rcutils_reset_error();
+      return RMW_RET_ERROR;
+    }
+    *ros_message = message;
+
+    // Register per-loan entry keyed by typed_base (the address that
+    // get_backing_storage returns for the message view).  This ensures
+    // the publish and return-loan paths can find the entry via
+    // backing storage lookup.
+    {
+      std::lock_guard<std::mutex> lock(info->outstanding_loans_mutex_);
+      info->outstanding_loans[typed_base] = {
+        blob, std::move(loan_handle), expected_data_size};
+    }
+  } else {
+    // -- Non-XCDR backend: raw-blob loan --
+    void * blob = nullptr;
+    if (!info->data_writer_->loan_sample(
+        blob,
+        eprosima::fastdds::dds::DataWriter::LoanInitializationKind::NO_LOAN_INITIALIZATION))
+    {
+      return RMW_RET_ERROR;
+    }
+    *ros_message = blob;
   }
 
   return RMW_RET_OK;
@@ -202,8 +306,51 @@ __rmw_return_loaned_message_from_publisher(
   RMW_CHECK_ARGUMENT_FOR_NULL(loaned_message, RMW_RET_INVALID_ARGUMENT);
 
   auto info = static_cast<CustomPublisherInfo *>(publisher->data);
-  if (!info->data_writer_->discard_loan(loaned_message)) {
-    return RMW_RET_ERROR;
+
+  auto * xcdr_ts = dynamic_cast<rmw_fastrtps_shared_cpp::XcdrTypeSupport *>(
+    info->type_support_.get());
+
+  if (xcdr_ts) {
+    // -- XCDR backend: typed-view lifecycle --
+    rosidl_runtime_cpp::MemoryRegion<void> backing =
+      rosidl_typesupport_xcdr_cpp::get_backing_storage(
+        xcdr_ts->get_effective_handle(), loaned_message);
+    void * lookup_key = backing.data();
+    if (nullptr == lookup_key) {
+      RMW_SET_ERROR_MSG("cannot derive blob key from message view");
+      return RMW_RET_ERROR;
+    }
+
+    // Look up the per-loan entry.
+    std::shared_ptr<rosidl_message_type_support_t> entry_handle{nullptr};
+    void * blob = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(info->outstanding_loans_mutex_);
+      auto it = info->outstanding_loans.find(lookup_key);
+      if (it == info->outstanding_loans.end()) {
+        RMW_SET_ERROR_MSG("missing per-loan entry for constrained message");
+        return RMW_RET_INVALID_ARGUMENT;
+      }
+      entry_handle = it->second.handle;
+      blob = it->second.blob;
+      info->outstanding_loans.erase(it);
+    }
+
+    // Release the typed view to recover the underlying blob, then discard.
+    rosidl_memory_region_t storage =
+      rosidl_typesupport_xcdr_c_release_message(entry_handle.get(), loaned_message);
+    if (nullptr == storage.location.address) {
+      RMW_SET_ERROR_MSG("failed to release loaned message");
+      return RMW_RET_ERROR;
+    }
+    if (!info->data_writer_->discard_loan(blob)) {
+      return RMW_RET_ERROR;
+    }
+  } else {
+    // -- Non-XCDR backend: raw-blob loan --
+    if (!info->data_writer_->discard_loan(loaned_message)) {
+      return RMW_RET_ERROR;
+    }
   }
 
   return RMW_RET_OK;

@@ -25,6 +25,12 @@
 #include "rmw_fastrtps_shared_cpp/rmw_common.hpp"
 #include "rmw_fastrtps_shared_cpp/custom_publisher_info.hpp"
 #include "rmw_fastrtps_shared_cpp/TypeSupport.hpp"
+#include "rmw_fastrtps_shared_cpp/XcdrTypeSupport.hpp"
+
+#include "rosidl_typesupport_xcdr_c/message_type_support.h"
+#include "rosidl_typesupport_xcdr_cpp/message_type_support.hpp"
+
+#include "rosidl_runtime_cpp/experimental/memory.hpp"
 
 #include "tracetools/tracetools.h"
 
@@ -143,15 +149,79 @@ __rmw_publish_loaned_message(
   RMW_CHECK_ARGUMENT_FOR_NULL(ros_message, RMW_RET_INVALID_ARGUMENT);
 
   auto info = static_cast<CustomPublisherInfo *>(publisher->data);
-  eprosima::fastrtps::Time_t stamp;
-  eprosima::fastrtps::Time_t::now(stamp);
-  TRACETOOLS_TRACEPOINT(rmw_publish, publisher, ros_message, stamp.to_ns());
-  if (!info->data_writer_->write_w_timestamp(
-      const_cast<void *>(ros_message),
-      eprosima::fastdds::dds::HANDLE_NIL, stamp))
-  {
-    RMW_SET_ERROR_MSG("cannot publish data");
-    return RMW_RET_ERROR;
+
+  auto * xcdr_ts = dynamic_cast<rmw_fastrtps_shared_cpp::XcdrTypeSupport *>(
+    info->type_support_.get());
+
+  if (xcdr_ts) {
+    // -- XCDR backend: typed-view lifecycle --
+    // Derive the blob pointer from the message view (non-destructive).
+    // Use the effective handle only for backing-storage derivation;
+    // the per-loan entry handle is used for compaction below.
+    rosidl_runtime_cpp::MemoryRegion<void> backing =
+      rosidl_typesupport_xcdr_cpp::get_backing_storage(
+        xcdr_ts->get_effective_handle(), ros_message);
+    void * lookup_key = backing.data();
+    if (nullptr == lookup_key) {
+      RMW_SET_ERROR_MSG("cannot derive blob key from message view");
+      return RMW_RET_ERROR;
+    }
+
+    // Look up the per-loan entry and extract its specific handle & blob.
+    void * blob = nullptr;
+    std::shared_ptr<rosidl_message_type_support_t> entry_handle{nullptr};
+    {
+      std::lock_guard<std::mutex> lock(info->outstanding_loans_mutex_);
+      auto it = info->outstanding_loans.find(lookup_key);
+      if (it == info->outstanding_loans.end()) {
+        RMW_SET_ERROR_MSG("missing per-loan entry for constrained message");
+        return RMW_RET_INVALID_ARGUMENT;
+      }
+      blob = it->second.blob;
+      entry_handle = it->second.handle;
+      info->outstanding_loans.erase(it);
+    }
+
+    // Compact and consume the message view using the loan-specific handle
+    // (which may differ from the publisher's effective handle).
+    // The compacted XCDR data (its own CDR header + fields) is written at
+    // the typed_view base, i.e. payload.data[0].  The wire carries
+    // m_typeSize bytes (the loan is pre-sized); the receiver bounds parsing
+    // by payload->length, so no size needs to be encoded.
+    rosidl_memory_region_t region =
+      rosidl_typesupport_xcdr_cpp::compact_message_in_place(
+        entry_handle.get(), const_cast<void *>(ros_message));
+
+    if (nullptr == region.location.address) {
+      // Compaction failed — message view NOT consumed.
+      info->data_writer_->discard_loan(blob);
+      rcutils_reset_error();
+      return RMW_RET_ERROR;
+    }
+
+    // Write the blob (repr header at [-4..-1], compacted XCDR at [0..]).
+    eprosima::fastrtps::Time_t stamp;
+    eprosima::fastrtps::Time_t::now(stamp);
+    TRACETOOLS_TRACEPOINT(rmw_publish, publisher, ros_message, stamp.to_ns());
+    if (!info->data_writer_->write_w_timestamp(
+        blob, eprosima::fastdds::dds::HANDLE_NIL, stamp))
+    {
+      info->data_writer_->discard_loan(blob);
+      RMW_SET_ERROR_MSG("cannot publish data");
+      return RMW_RET_ERROR;
+    }
+  } else {
+    // -- Non-XCDR backend: raw-blob loan --
+    void * blob = const_cast<void *>(ros_message);
+    eprosima::fastrtps::Time_t stamp;
+    eprosima::fastrtps::Time_t::now(stamp);
+    TRACETOOLS_TRACEPOINT(rmw_publish, publisher, ros_message, stamp.to_ns());
+    if (!info->data_writer_->write_w_timestamp(
+        blob, eprosima::fastdds::dds::HANDLE_NIL, stamp))
+    {
+      RMW_SET_ERROR_MSG("cannot publish data");
+      return RMW_RET_ERROR;
+    }
   }
 
   return RMW_RET_OK;

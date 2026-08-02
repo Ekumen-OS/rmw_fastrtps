@@ -15,8 +15,10 @@
 #ifndef RMW_FASTRTPS_SHARED_CPP__CUSTOM_PUBLISHER_INFO_HPP_
 #define RMW_FASTRTPS_SHARED_CPP__CUSTOM_PUBLISHER_INFO_HPP_
 
+#include <memory>
 #include <mutex>
 #include <set>
+#include <unordered_map>
 
 #include "fastdds/dds/core/policy/QosPolicies.hpp"
 #include "fastdds/dds/core/status/BaseStatus.hpp"
@@ -85,6 +87,37 @@ typedef struct CustomPublisherInfo : public CustomEventInfo
   const char * typesupport_identifier_{nullptr};
 
   eprosima::fastdds::dds::Topic * topic_{nullptr};
+
+  // Per-loan tracking: maps user-facing loaned message pointer to loan context.
+  struct PerLoanEntry
+  {
+    void * blob;
+    std::shared_ptr<rosidl_message_type_support_t> handle;
+    size_t expected_data_size;
+  };
+
+  /// Registry of outstanding loaned messages.
+  /**
+   * Key = typed-view base address (the memory region where the message
+   * was constructed, i.e. the blob pointer itself).  This is the pointer
+   * returned by get_backing_storage() for the constructed message view,
+   * enabling the publish and return-loan paths to look up the per-loan
+   * entry.
+   *
+   * Value = PerLoanEntry with the underlying Fast DDS loan sample pointer
+   * (for discard_loan), the handle used for construction/compaction, and
+   * the expected data size.
+   *
+   * Entries are inserted at borrow time and removed on publish or return.
+   * For unconstrained (raw-blob) loans, no entry is created.
+   *
+   * Thread safety: all access to this map must hold outstanding_loans_mutex_.
+   */
+  std::unordered_map<void *, PerLoanEntry> outstanding_loans
+    RCPPUTILS_TSA_GUARDED_BY(outstanding_loans_mutex_);
+
+  /// Mutex protecting outstanding_loans_.
+  mutable std::mutex outstanding_loans_mutex_;
 
   RMW_FASTRTPS_SHARED_CPP_PUBLIC
   EventListenerInterface *

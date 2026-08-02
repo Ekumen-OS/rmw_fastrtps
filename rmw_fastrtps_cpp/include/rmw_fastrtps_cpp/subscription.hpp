@@ -27,6 +27,7 @@ rmw_subscription_t *
 create_subscription(
   CustomParticipantInfo * participant_info,
   const rosidl_message_type_support_t * type_supports,
+  const rosidl_message_type_constraints_t * constraints,
   const char * topic_name,
   const rmw_qos_profile_t * qos_policies,
   const rmw_subscription_options_t * subscription_options,

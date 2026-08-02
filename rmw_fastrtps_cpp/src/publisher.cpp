@@ -43,6 +43,7 @@
 #include "rmw_fastrtps_shared_cpp/qos.hpp"
 #include "rmw_fastrtps_shared_cpp/rmw_common.hpp"
 #include "rmw_fastrtps_shared_cpp/utils.hpp"
+#include "rmw_fastrtps_shared_cpp/XcdrTypeSupport.hpp"
 
 #include "rmw_fastrtps_cpp/identifier.hpp"
 #include "rmw_fastrtps_cpp/publisher.hpp"
@@ -55,6 +56,7 @@ rmw_publisher_t *
 rmw_fastrtps_cpp::create_publisher(
   CustomParticipantInfo * participant_info,
   const rosidl_message_type_support_t * type_supports,
+  const rosidl_message_type_constraints_t * constraints,
   const char * topic_name,
   const rmw_qos_profile_t * qos_policies,
   const rmw_publisher_options_t * publisher_options)
@@ -101,25 +103,57 @@ rmw_fastrtps_cpp::create_publisher(
   }
 
   /////
-  // Get RMW Type Support
-  const rosidl_message_type_support_t * type_support = get_message_typesupport_handle(
-    type_supports, RMW_FASTRTPS_CPP_TYPESUPPORT_C);
-  if (!type_support) {
-    rcutils_error_string_t prev_error_string = rcutils_get_error_string();
-    rcutils_reset_error();
-    type_support = get_message_typesupport_handle(
-      type_supports, RMW_FASTRTPS_CPP_TYPESUPPORT_CPP);
-    if (!type_support) {
-      rcutils_error_string_t error_string = rcutils_get_error_string();
+  // Get RMW Type Support (backend-aware: select appropriate typesupport before extraction)
+
+  const rosidl_message_type_support_t * type_support = nullptr;
+  const void * ts_impl = nullptr;
+  std::string type_name;
+  const char * typesupport_identifier = nullptr;
+
+  if (participant_info->backend_mode == SerializationBackend::XCDR_BUFFERS) {
+    // XCDR backend: try XCDR typesupport first, fall back to FastRTPS.
+    type_support = try_get_xcdr_message_typesupport(type_supports);
+    if (type_support) {
+      typesupport_identifier = type_support->typesupport_identifier;
+      type_name = try_get_message_type_name_from_xcdr(type_support);
+      if (type_name.empty()) {
+        RMW_SET_ERROR_MSG("Could not determine type name from XCDR typesupport");
+        return nullptr;
+      }
+      ts_impl = nullptr;  // XcdrTypeSupport does not use impl field
+    } else {
+      // No XCDR typesupport for this type; fall back to FastRTPS.
       rcutils_reset_error();
-      RMW_SET_ERROR_MSG_WITH_FORMAT_STRING(
-        "Type support not from this implementation. Got:\n"
-        "    %s\n"
-        "    %s\n"
-        "while fetching it",
-        prev_error_string.str, error_string.str);
-      return nullptr;
+      RCUTILS_LOG_DEBUG_NAMED(
+        "rmw_fastrtps_cpp",
+        "XCDR typesupport not available for type, falling back to FastRTPS");
     }
+  }
+  if (!type_support) {
+    // FastCDR backend (default), or XCDR backend fallback
+    const rosidl_message_type_support_t * fastrtps_ts = try_get_fastrtps_message_typesupport_c(
+      type_supports);
+    if (!fastrtps_ts) {
+      rcutils_error_string_t prev_error_string = rcutils_get_error_string();
+      rcutils_reset_error();
+      fastrtps_ts = try_get_fastrtps_message_typesupport_cpp(type_supports);
+      if (!fastrtps_ts) {
+        rcutils_error_string_t error_string = rcutils_get_error_string();
+        rcutils_reset_error();
+        RMW_SET_ERROR_MSG_WITH_FORMAT_STRING(
+          "Type support not from this implementation. Got:\n"
+          "    %s\n"
+          "    %s\n"
+          "while fetching it",
+          prev_error_string.str, error_string.str);
+        return nullptr;
+      }
+    }
+    type_support = fastrtps_ts;
+    typesupport_identifier = type_support->typesupport_identifier;
+    auto callbacks = static_cast<const message_type_support_callbacks_t *>(type_support->data);
+    type_name = _create_type_name(callbacks);
+    ts_impl = callbacks;
   }
 
   std::lock_guard<std::mutex> lck(participant_info->entity_creation_mutex_);
@@ -127,9 +161,7 @@ rmw_fastrtps_cpp::create_publisher(
   /////
   // Find and check existing topic and type
 
-  // Create Topic and Type names
-  auto callbacks = static_cast<const message_type_support_callbacks_t *>(type_support->data);
-  std::string type_name = _create_type_name(callbacks);
+  // Create Topic names
   auto topic_name_mangled =
     _create_topic_name(qos_policies, ros_topic_prefix, topic_name).to_string();
 
@@ -170,20 +202,31 @@ rmw_fastrtps_cpp::create_publisher(
       delete info;
     });
 
-  info->typesupport_identifier_ = type_support->typesupport_identifier;
-  info->type_support_impl_ = callbacks;
+  info->typesupport_identifier_ = typesupport_identifier;
+  info->type_support_impl_ = ts_impl;
 
   /////
   // Create the Type Support struct
   if (!fastdds_type) {
-    auto tsupport = new (std::nothrow) MessageTypeSupport_cpp(callbacks);
-    if (!tsupport) {
-      RMW_SET_ERROR_MSG("create_publisher() failed to allocate MessageTypeSupport");
-      return nullptr;
+    if (nullptr == ts_impl) {
+      // XCDR-backed type support (ts_impl == nullptr when XCDR handle was resolved)
+      auto tsupport = new (std::nothrow) rmw_fastrtps_shared_cpp::XcdrTypeSupport(
+        type_supports, constraints, type_name);
+      if (!tsupport) {
+        RMW_SET_ERROR_MSG("create_publisher() failed to allocate XcdrTypeSupport");
+        return nullptr;
+      }
+      fastdds_type.reset(tsupport);
+    } else {
+      // FastCDR-backed type support
+      auto callbacks = static_cast<const message_type_support_callbacks_t *>(ts_impl);
+      auto tsupport = new (std::nothrow) MessageTypeSupport_cpp(callbacks);
+      if (!tsupport) {
+        RMW_SET_ERROR_MSG("create_publisher() failed to allocate MessageTypeSupport");
+        return nullptr;
+      }
+      fastdds_type.reset(tsupport);
     }
-
-    // Transfer ownership to fastdds_type
-    fastdds_type.reset(tsupport);
   }
 
   if (ReturnCode_t::RETCODE_OK != fastdds_type.register_type(dds_participant)) {
@@ -193,10 +236,15 @@ rmw_fastrtps_cpp::create_publisher(
   info->type_support_ = fastdds_type;
 
   if (!rmw_fastrtps_shared_cpp::register_type_object(type_supports, type_name)) {
-    RMW_SET_ERROR_MSG_WITH_FORMAT_STRING(
-      "failed to register type object with incompatible type %s",
+    // Type object registration fails when no introspection typesupport is available
+    // (e.g., XCDR-only experimental messages).  This is non-fatal — the metadata
+    // is used for type hash discovery during matching but isn't required for communication.
+    RCUTILS_LOG_WARN_NAMED(
+      "rmw_fastrtps_cpp",
+      "Failed to register type object for type %s; "
+      "type hash discovery may be degraded (non-fatal)",
       type_name.c_str());
-    return nullptr;
+    rcutils_reset_error();
   }
 
   /////
@@ -257,7 +305,7 @@ rmw_fastrtps_cpp::create_publisher(
 
   // Get QoS from RMW
   if (!get_datawriter_qos(
-      *qos_policies, *type_supports->get_type_hash_func(type_supports),
+      *qos_policies, try_get_type_hash(type_supports),
       writer_qos))
   {
     RMW_SET_ERROR_MSG("create_publisher() failed setting data writer QoS");
@@ -304,7 +352,17 @@ rmw_fastrtps_cpp::create_publisher(
       rmw_publisher_free(rmw_publisher);
     });
 
-  rmw_publisher->can_loan_messages = info->type_support_->is_plain();
+  // XCDR publishers can loan only when the type is bounded (constrained
+  // layout or inherently fixed): unbounded unconstrained types cannot
+  // provide a typed loan (borrow would fail).  FastCDR publishers loan
+  // when the type is plain.
+  auto * type_ptr = info->type_support_.get();
+  auto * xcdr_ts = dynamic_cast<rmw_fastrtps_shared_cpp::XcdrTypeSupport *>(type_ptr);
+  if (xcdr_ts) {
+    rmw_publisher->can_loan_messages = xcdr_ts->is_bounded();
+  } else {
+    rmw_publisher->can_loan_messages = type_ptr->is_plain();
+  }
   rmw_publisher->implementation_identifier = eprosima_fastrtps_identifier;
   rmw_publisher->data = info;
 

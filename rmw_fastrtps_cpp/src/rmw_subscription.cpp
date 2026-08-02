@@ -88,6 +88,78 @@ rmw_create_subscription(
   rmw_subscription_t * subscription = rmw_fastrtps_cpp::create_subscription(
     participant_info,
     type_supports,
+    nullptr,  // constraints
+    topic_name,
+    &adapted_qos_policies,
+    subscription_options,
+    false);  // use no keyed topic
+  if (!subscription) {
+    return nullptr;
+  }
+  auto cleanup_subscription = rcpputils::make_scope_exit(
+    [participant_info, subscription]() {
+      rmw_error_state_t error_state = *rmw_get_error_state();
+      rmw_reset_error();
+      if (RMW_RET_OK != rmw_fastrtps_shared_cpp::destroy_subscription(
+        eprosima_fastrtps_identifier, participant_info, subscription))
+      {
+        RMW_SAFE_FWRITE_TO_STDERR(rmw_get_error_string().str);
+        RMW_SAFE_FWRITE_TO_STDERR(" during '" RCUTILS_STRINGIFY(__function__) "' cleanup\n");
+        rmw_reset_error();
+      }
+      rmw_set_error_state(error_state.message, error_state.file, error_state.line_number);
+    });
+
+  auto common_context = static_cast<rmw_dds_common::Context *>(node->context->impl->common);
+  auto info = static_cast<CustomSubscriberInfo *>(subscription->data);
+
+  // Update graph
+  if (RMW_RET_OK != common_context->add_subscriber_graph(
+      info->subscription_gid_,
+      node->name, node->namespace_))
+  {
+    return nullptr;
+  }
+
+  info->node_ = node;
+  info->common_context_ = common_context;
+
+  cleanup_subscription.cancel();
+  return subscription;
+}
+
+rmw_subscription_t *
+rmw_create_subscription_with_constraints(
+  const rmw_node_t * node,
+  const rosidl_message_type_support_t * type_supports,
+  const rosidl_message_type_constraints_t * type_constraints,
+  const char * topic_name,
+  const rmw_qos_profile_t * qos_policies,
+  const rmw_subscription_options_t * subscription_options)
+{
+  RMW_CHECK_ARGUMENT_FOR_NULL(node, nullptr);
+  RMW_CHECK_TYPE_IDENTIFIERS_MATCH(
+    node,
+    node->implementation_identifier,
+    eprosima_fastrtps_identifier,
+    return nullptr);
+  RMW_CHECK_ARGUMENT_FOR_NULL(qos_policies, nullptr);
+  RMW_CHECK_ARGUMENT_FOR_NULL(type_constraints, nullptr);
+
+  // Adapt any 'best available' QoS options
+  rmw_qos_profile_t adapted_qos_policies = *qos_policies;
+  rmw_ret_t ret = rmw_dds_common::qos_profile_get_best_available_for_topic_subscription(
+    node, topic_name, &adapted_qos_policies, rmw_get_publishers_info_by_topic);
+  if (RMW_RET_OK != ret) {
+    return nullptr;
+  }
+
+  auto participant_info =
+    static_cast<CustomParticipantInfo *>(node->context->impl->participant_info);
+  rmw_subscription_t * subscription = rmw_fastrtps_cpp::create_subscription(
+    participant_info,
+    type_supports,
+    type_constraints,
     topic_name,
     &adapted_qos_policies,
     subscription_options,

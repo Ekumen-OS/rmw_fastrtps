@@ -185,7 +185,7 @@ rmw_borrow_loaned_message(
   void ** ros_message)
 {
   return rmw_fastrtps_shared_cpp::__rmw_borrow_loaned_message(
-    eprosima_fastrtps_identifier, publisher, type_support, ros_message);
+    eprosima_fastrtps_identifier, publisher, type_support, nullptr, ros_message);
 }
 
 rmw_ret_t

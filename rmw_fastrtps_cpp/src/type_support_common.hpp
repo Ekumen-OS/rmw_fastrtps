@@ -18,19 +18,30 @@
 #include <sstream>
 #include <string>
 
+#include "rcutils/error_handling.h"
+#include "rcutils/logging_macros.h"
+
 #include "rmw/error_handling.h"
 
 #include "rmw_fastrtps_shared_cpp/TypeSupport.hpp"
+#include "rmw_fastrtps_shared_cpp/rmw_init_options_impl.hpp"
 
 #include "rmw_fastrtps_cpp/MessageTypeSupport.hpp"
 #include "rmw_fastrtps_cpp/ServiceTypeSupport.hpp"
 
 #include "rmw_fastrtps_cpp/identifier.hpp"
 
+#include "rosidl_runtime_c/type_hash.h"
+
 #include "rosidl_typesupport_fastrtps_c/identifier.h"
 #include "rosidl_typesupport_fastrtps_cpp/identifier.hpp"
 #include "rosidl_typesupport_fastrtps_cpp/message_type_support.h"
 #include "rosidl_typesupport_fastrtps_cpp/service_type_support.h"
+
+#include "rosidl_typesupport_xcdr_c/identifier.h"
+#include "rosidl_typesupport_xcdr_c/message_type_support.h"
+#include "rosidl_typesupport_xcdr_cpp/identifier.hpp"
+
 #define RMW_FASTRTPS_CPP_TYPESUPPORT_C rosidl_typesupport_fastrtps_c__identifier
 #define RMW_FASTRTPS_CPP_TYPESUPPORT_CPP rosidl_typesupport_fastrtps_cpp::typesupport_identifier
 
@@ -63,6 +74,130 @@ _create_type_name(
   std::string message_namespace(members->message_namespace_);
   std::string message_name(members->message_name_);
   return _create_type_name(message_namespace, message_name);
+}
+
+// ---------------------------------------------------------------------------
+// Backend-aware type support lookup helpers
+// ---------------------------------------------------------------------------
+
+/// Try to resolve the XCDR message typesupport handle from the dispatch tree.
+inline const rosidl_message_type_support_t *
+try_get_xcdr_message_typesupport(
+  const rosidl_message_type_support_t * type_supports)
+{
+  if (nullptr == type_supports) {
+    return nullptr;
+  }
+  const rosidl_message_type_support_t * ts = get_message_typesupport_handle(
+    type_supports, rosidl_typesupport_xcdr_cpp__identifier);
+  if (nullptr == ts) {
+    rcutils_reset_error();
+    ts = get_message_typesupport_handle(
+      type_supports, rosidl_typesupport_xcdr_c__identifier);
+    if (nullptr != ts) {
+      rcutils_reset_error();
+    }
+  }
+  if (nullptr == ts) {
+    rcutils_reset_error();
+  }
+  return ts;
+}
+
+/// Try to resolve the FastRTPS C message typesupport handle from the dispatch tree.
+inline const rosidl_message_type_support_t *
+try_get_fastrtps_message_typesupport_c(
+  const rosidl_message_type_support_t * type_supports)
+{
+  return get_message_typesupport_handle(
+    type_supports, RMW_FASTRTPS_CPP_TYPESUPPORT_C);
+}
+
+/// Try to resolve the FastRTPS C++ message typesupport handle from the dispatch tree.
+inline const rosidl_message_type_support_t *
+try_get_fastrtps_message_typesupport_cpp(
+  const rosidl_message_type_support_t * type_supports)
+{
+  return get_message_typesupport_handle(
+    type_supports, RMW_FASTRTPS_CPP_TYPESUPPORT_CPP);
+}
+
+/// Try to resolve any FastRTPS message typesupport, trying C then C++.
+inline const rosidl_message_type_support_t *
+try_get_fastrtps_message_typesupport(
+  const rosidl_message_type_support_t * type_supports)
+{
+  const rosidl_message_type_support_t * ts = try_get_fastrtps_message_typesupport_c(type_supports);
+  if (nullptr != ts) {
+    return ts;
+  }
+  rcutils_reset_error();
+  ts = try_get_fastrtps_message_typesupport_cpp(type_supports);
+  if (nullptr != ts) {
+    return ts;
+  }
+  rcutils_reset_error();
+  return nullptr;
+}
+
+/// Try to resolve the FastRTPS service typesupport, trying C then C++.
+inline const rosidl_service_type_support_t *
+try_get_fastrtps_service_typesupport(
+  const rosidl_service_type_support_t * type_supports)
+{
+  const rosidl_service_type_support_t * ts = get_service_typesupport_handle(
+    type_supports, RMW_FASTRTPS_CPP_TYPESUPPORT_C);
+  if (nullptr != ts) {
+    return ts;
+  }
+  rcutils_error_string_t prev_error_string = rcutils_get_error_string();
+  rcutils_reset_error();
+  ts = get_service_typesupport_handle(
+    type_supports, RMW_FASTRTPS_CPP_TYPESUPPORT_CPP);
+  if (nullptr != ts) {
+    return ts;
+  }
+  RCUTILS_LOG_DEBUG_NAMED(
+    "rmw_fastrtps_cpp",
+    "No FastRTPS service typesupport found. Previous error: %s",
+    prev_error_string.str);
+  rcutils_reset_error();
+  return nullptr;
+}
+
+/// Try to extract a message type name from an XCDR typesupport handle.
+/**
+ * Uses the XCDR outer struct's message_namespace and message_name fields
+ * (populated by the code generator).
+ */
+inline std::string
+try_get_message_type_name_from_xcdr(
+  const rosidl_message_type_support_t * xcdr_ts)
+{
+  if (nullptr == xcdr_ts || nullptr == xcdr_ts->data) {
+    return "";
+  }
+  auto xcdr = static_cast<const rosidl_message_xcdr_type_support_t *>(xcdr_ts->data);
+  if (nullptr != xcdr->message_namespace && nullptr != xcdr->message_name) {
+    return _create_type_name(xcdr->message_namespace, xcdr->message_name);
+  }
+  return "";
+}
+
+/// Safe type hash retrieval: returns a zero-initialized hash when unavailable.
+inline rosidl_type_hash_t
+try_get_type_hash(
+  const rosidl_message_type_support_t * type_supports)
+{
+  if (nullptr != type_supports && nullptr != type_supports->get_type_hash_func) {
+    const rosidl_type_hash_t * hash = type_supports->get_type_hash_func(type_supports);
+    if (nullptr != hash) {
+      return *hash;
+    }
+    // hash function returned nullptr; clear any error it may have set.
+    rcutils_reset_error();
+  }
+  return rosidl_get_zero_initialized_type_hash();
 }
 
 #endif  // TYPE_SUPPORT_COMMON_HPP_

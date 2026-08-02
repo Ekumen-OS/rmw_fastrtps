@@ -46,6 +46,7 @@
 #include "rmw_fastrtps_shared_cpp/custom_event_info.hpp"
 #include "rmw_fastrtps_shared_cpp/qos.hpp"
 #include "rmw_fastrtps_shared_cpp/rmw_common.hpp"
+#include "rmw_fastrtps_shared_cpp/rmw_init_options_impl.hpp"
 
 using rmw_dds_common::operator<<;
 
@@ -116,6 +117,9 @@ typedef struct CustomParticipantInfo
   // with the default configuration.
   bool leave_middleware_default_qos;
   publishing_mode_t publishing_mode;
+
+  /// Selected serialization backend for this participant's context.
+  SerializationBackend backend_mode{SerializationBackend::FASTCDR};
 
   RMW_FASTRTPS_SHARED_CPP_PUBLIC
   eprosima::fastdds::dds::Topic * find_or_create_topic(

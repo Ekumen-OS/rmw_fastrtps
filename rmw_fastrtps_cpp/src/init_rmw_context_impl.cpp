@@ -81,6 +81,10 @@ init_context_impl(
     return RMW_RET_BAD_ALLOC;
   }
 
+  // Propagate the selected serialization backend to the participant info so
+  // publisher/subscription creation can choose the appropriate typesupport.
+  participant_info->backend_mode = context->impl->backend_mode;
+
   rmw_qos_profile_t qos = rmw_qos_profile_default;
 
   qos.avoid_ros_namespace_conventions = true;
@@ -94,6 +98,7 @@ init_context_impl(
     rmw_fastrtps_cpp::create_publisher(
       participant_info.get(),
       rosidl_typesupport_cpp::get_message_type_support_handle<ParticipantEntitiesInfo>(),
+      nullptr,  // constraints
       "ros_discovery_info",
       &qos,
       &publisher_options),
@@ -120,6 +125,7 @@ init_context_impl(
     rmw_fastrtps_cpp::create_subscription(
       participant_info.get(),
       rosidl_typesupport_cpp::get_message_type_support_handle<ParticipantEntitiesInfo>(),
+      nullptr,  // constraints
       "ros_discovery_info",
       &qos,
       &subscription_options,

@@ -18,6 +18,10 @@
 #include "rmw/serialized_message.h"
 #include "rmw/rmw.h"
 
+#include "rosidl_runtime_cpp/experimental/memory.hpp"
+
+#include "rosidl_typesupport_xcdr_cpp/message_type_support.hpp"
+
 #include "./type_support_common.hpp"
 
 extern "C"
@@ -28,6 +32,36 @@ rmw_serialize(
   const rosidl_message_type_support_t * type_support,
   rmw_serialized_message_t * serialized_message)
 {
+  // XCDR backend: serialize via the XCDR trampolines (buffer = CDR header + fields).
+  const rosidl_message_type_support_t * xcdr_ts = try_get_xcdr_message_typesupport(type_support);
+  if (xcdr_ts) {
+    size_t data_length = 0;
+    if (RCUTILS_RET_OK != rosidl_typesupport_xcdr_cpp::get_message_size(
+        xcdr_ts, ros_message, &data_length))
+    {
+      RMW_SET_ERROR_MSG("failed to get XCDR message size");
+      return RMW_RET_ERROR;
+    }
+    if (serialized_message->buffer_capacity < data_length) {
+      if (rmw_serialized_message_resize(serialized_message, data_length) != RMW_RET_OK) {
+        RMW_SET_ERROR_MSG("unable to dynamically resize serialized message");
+        return RMW_RET_ERROR;
+      }
+    }
+    rosidl_runtime_cpp::MemoryRegion<void> storage(
+      serialized_message->buffer, data_length);
+    if (RCUTILS_RET_OK != rosidl_typesupport_xcdr_cpp::serialize_message_into(
+        xcdr_ts, ros_message, storage))
+    {
+      RMW_SET_ERROR_MSG("XCDR serialization failed");
+      return RMW_RET_ERROR;
+    }
+    serialized_message->buffer_length = data_length;
+    serialized_message->buffer_capacity = data_length;
+    return RMW_RET_OK;
+  }
+  rcutils_reset_error();
+
   const rosidl_message_type_support_t * ts = get_message_typesupport_handle(
     type_support, RMW_FASTRTPS_CPP_TYPESUPPORT_C);
   if (!ts) {
@@ -67,6 +101,21 @@ rmw_deserialize(
   const rosidl_message_type_support_t * type_support,
   void * ros_message)
 {
+  // XCDR backend: deserialize via the XCDR trampolines.
+  const rosidl_message_type_support_t * xcdr_ts = try_get_xcdr_message_typesupport(type_support);
+  if (xcdr_ts) {
+    rosidl_runtime_cpp::MemoryRegion<void> storage(
+      serialized_message->buffer, serialized_message->buffer_length);
+    if (RCUTILS_RET_OK != rosidl_typesupport_xcdr_cpp::deserialize_message_from(
+        xcdr_ts, storage, ros_message))
+    {
+      RMW_SET_ERROR_MSG("XCDR deserialization failed");
+      return RMW_RET_ERROR;
+    }
+    return RMW_RET_OK;
+  }
+  rcutils_reset_error();
+
   const rosidl_message_type_support_t * ts = get_message_typesupport_handle(
     type_support, RMW_FASTRTPS_CPP_TYPESUPPORT_C);
   if (!ts) {

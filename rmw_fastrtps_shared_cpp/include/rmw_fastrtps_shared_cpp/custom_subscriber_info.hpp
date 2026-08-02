@@ -21,6 +21,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "fastdds/dds/core/status/DeadlineMissedStatus.hpp"
@@ -102,6 +103,25 @@ struct CustomSubscriberInfo : public CustomEventInfo
   rmw_gid_t subscription_gid_{};
   const char * typesupport_identifier_{nullptr};
   std::shared_ptr<rmw_fastrtps_shared_cpp::LoanManager> loan_manager_;
+
+  /// Per-loan entry for a typed XCDR view on a subscription loan.
+  /// Populated by the XCDR loaned-take path: the key is the typed view
+  /// pointer handed to the caller, the value is the SerializedData holder
+  /// (registered in loan_manager_) and the handle used to destroy the view.
+  struct XcdrLoanEntry
+  {
+    void * holder;
+    std::shared_ptr<rosidl_message_type_support_t> handle;
+  };
+
+  /// Mutex guarding xcdr_loan_map_.
+  mutable std::mutex xcdr_loan_mutex_;
+
+  /// Mapping from the user-returned typed view pointer to its per-loan entry.
+  /// Keyed by the view pointer because rmw_return_loaned_message receives
+  /// the same pointer back.
+  std::unordered_map<void *, XcdrLoanEntry> xcdr_loan_map_
+  RCPPUTILS_TSA_GUARDED_BY(xcdr_loan_mutex_);
 
   // for re-create or delete content filtered topic
   const rmw_node_t * node_ {nullptr};

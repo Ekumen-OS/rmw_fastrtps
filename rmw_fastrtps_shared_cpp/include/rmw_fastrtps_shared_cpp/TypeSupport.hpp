@@ -39,7 +39,10 @@ enum SerializedDataType
 {
   FASTRTPS_SERIALIZED_DATA_TYPE_CDR_BUFFER,
   FASTRTPS_SERIALIZED_DATA_TYPE_DYNAMIC_MESSAGE,
-  FASTRTPS_SERIALIZED_DATA_TYPE_ROS_MESSAGE
+  FASTRTPS_SERIALIZED_DATA_TYPE_ROS_MESSAGE,
+  // XCDR backend non-plain loan-sample holder: deserialize() casts the
+  // payload and stores the typed view pointer in SerializedData::data.
+  FASTRTPS_SERIALIZED_DATA_TYPE_XCDR_LOAN_VIEW
 };
 
 // Publishers write method will receive a pointer to this struct
