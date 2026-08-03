@@ -123,8 +123,10 @@ xcdr_maybe_view_loaned_message(
       return RMW_RET_ERROR;
     }
     if (RCUTILS_RET_OK != ret || nullptr == view) {
+      rcutils_error_string_t cast_err = rcutils_get_error_string();
       rcutils_reset_error();
-      RMW_SET_ERROR_MSG("failed to cast XCDR loan buffer to typed message");
+      RMW_SET_ERROR_MSG_WITH_FORMAT_STRING(
+        "failed to cast XCDR loan buffer to typed message: %s", cast_err.str);
       return RMW_RET_ERROR;
     }
   } else {

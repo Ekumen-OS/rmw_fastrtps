@@ -581,12 +581,22 @@ __init_subscription_for_loans(
   auto * type_ptr = info->type_support_.get();
   auto * xcdr_ts = dynamic_cast<rmw_fastrtps_shared_cpp::XcdrTypeSupport *>(type_ptr);
   if (nullptr != xcdr_ts) {
-    // XCDR-backed subscription: advertise loan capability whenever the type
-    // supports typed views (the codegen emits cast_message for types with
-    // constraints support).  This includes unbounded types: their non-plain
-    // loan path casts the payload into a view holder inside deserialize().
-    // Types without cast_message fall back to copy take.
-    subscription->can_loan_messages = xcdr_ts->supports_loans();
+    // Loaned takes only pay off once payload copies dominate the per-message
+    // overhead (measured crossover ~1M).  For bounded types the expected
+    // size is statically known, so advertise loan capability only at or
+    // above the threshold; below it the plain copy take is faster.
+    // Unbounded types have no sound size guess — allow loaning by default
+    // (their non-plain loan path casts the payload into a view holder).
+    constexpr size_t kLoanedTakeMinPayload = 1024 * 1024;  // 1 MiB
+    if (xcdr_ts->is_bounded()) {
+      size_t expected =
+        rmw_fastrtps_shared_cpp::XcdrTypeSupport::get_expected_data_size_for_handle(
+        xcdr_ts->get_effective_handle());
+      subscription->can_loan_messages =
+        expected >= kLoanedTakeMinPayload && xcdr_ts->supports_loans();
+    } else {
+      subscription->can_loan_messages = xcdr_ts->supports_loans();
+    }
   } else {
     subscription->can_loan_messages = type_ptr->is_plain();
   }
