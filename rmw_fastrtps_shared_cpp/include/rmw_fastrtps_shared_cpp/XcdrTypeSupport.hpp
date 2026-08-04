@@ -29,6 +29,11 @@
 #include "rmw_fastrtps_shared_cpp/TypeSupport.hpp"
 #include "rmw_fastrtps_shared_cpp/visibility_control.h"
 
+// CustomParticipantInfo is a C-style struct typedef in the global namespace
+// (see custom_participant_info.hpp); forward-declare it the same way so the
+// declaration below matches the real type.
+typedef struct CustomParticipantInfo CustomParticipantInfo;
+
 namespace rmw_fastrtps_shared_cpp
 {
 
@@ -247,6 +252,41 @@ private:
   /// Whether this type is fully bounded (fixed layout known, from base or constraints).
   bool bounded_{false};
 };
+
+/// Resolve the type names and registration strategy for a constrained XCDR
+/// endpoint (publisher or subscription) on a given topic.
+///
+/// Constrained variants of the same message type are different types for
+/// serialization / deserialization / loaning but equivalent for matching, so
+/// each endpoint registers its own TypeSupport under a unique local type
+/// name (base name + "#" + per-participant counter).
+///
+/// - Topic does not exist (first endpoint on it): the caller must register
+///   its own TypeSupport under `*own_type_name` and create the topic with
+///   that same name (`*topic_type_name == *own_type_name`, `*register_own ==
+///   true`).
+/// - Topic exists and the endpoint's constraints are compatible with the
+///   registered type support: the endpoint shares the topic's registered
+///   type.  The caller's own TypeSupport (named `*own_type_name`) is used
+///   only for XCDR view logic and is NOT registered (`*register_own ==
+///   false`); `*topic_type_name` is the existing topic's type name.
+/// - Topic exists with incompatible constraints: returns false with an RMW
+///   error set (explicit failure, per design).
+///
+/// Must be called with `participant_info->entity_creation_mutex_` held.
+///
+/// @param[out] own_type_name  Name for the endpoint's own TypeSupport.
+/// @param[out] topic_type_name  Type name to use when creating/using the topic.
+/// @param[out] register_own  Whether the caller must register its own TypeSupport.
+RMW_FASTRTPS_SHARED_CPP_PUBLIC
+bool resolve_constrained_endpoint(
+  CustomParticipantInfo * participant_info,
+  const std::string & topic_name_mangled,
+  const std::string & base_type_name,
+  const rosidl_message_type_constraints_t * constraints,
+  std::string * own_type_name,
+  std::string * topic_type_name,
+  bool * register_own);
 
 }  // namespace rmw_fastrtps_shared_cpp
 

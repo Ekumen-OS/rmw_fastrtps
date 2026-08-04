@@ -158,25 +158,46 @@ rmw_fastrtps_cpp::create_publisher(
 
   std::lock_guard<std::mutex> lck(participant_info->entity_creation_mutex_);
 
-  /////
-  // Find and check existing topic and type
-
   // Create Topic names
   auto topic_name_mangled =
     _create_topic_name(qos_policies, ros_topic_prefix, topic_name).to_string();
+
+  /////
+  // Resolve the registration strategy for XCDR endpoints.
+  //
+  // Constrained variants of the same message type are different types for
+  // serialization / deserialization / loaning but equivalent for matching, so
+  // each constrained endpoint registers under a unique local type name.
+  // Different topics can then carry different constrained variants; an
+  // existing topic with incompatible constraints fails explicitly.
+  bool is_constrained = (nullptr == ts_impl && nullptr != constraints);
+  std::string endpoint_type_name = type_name;
+  std::string topic_type_name = type_name;
+  bool register_own_type = true;
+  if (nullptr == ts_impl) {
+    if (!rmw_fastrtps_shared_cpp::resolve_constrained_endpoint(
+        participant_info, topic_name_mangled, type_name, constraints,
+        &endpoint_type_name, &topic_type_name, &register_own_type))
+    {
+      return nullptr;
+    }
+  }
+
+  /////
+  // Find and check existing topic and type
 
   eprosima::fastdds::dds::TypeSupport fastdds_type;
   eprosima::fastdds::dds::TopicDescription * des_topic;
   if (!rmw_fastrtps_shared_cpp::find_and_check_topic_and_type(
       participant_info,
       topic_name_mangled,
-      type_name,
+      topic_type_name,
       &des_topic,
       &fastdds_type))
   {
     RMW_SET_ERROR_MSG_WITH_FORMAT_STRING(
       "create_publisher() called for existing topic name %s with incompatible type %s",
-      topic_name_mangled.c_str(), type_name.c_str());
+      topic_name_mangled.c_str(), topic_type_name.c_str());
     return nullptr;
   }
 
@@ -207,44 +228,55 @@ rmw_fastrtps_cpp::create_publisher(
 
   /////
   // Create the Type Support struct
-  if (!fastdds_type) {
-    if (nullptr == ts_impl) {
-      // XCDR-backed type support (ts_impl == nullptr when XCDR handle was resolved)
+  if (nullptr == ts_impl) {
+    // XCDR-backed type support (ts_impl == nullptr when XCDR handle was resolved).
+    // Constrained endpoints always get their own instance (carrying their own
+    // constraints and a unique local type name); unconstrained endpoints reuse
+    // an already-registered type when one exists.
+    if (is_constrained || !fastdds_type) {
       auto tsupport = new (std::nothrow) rmw_fastrtps_shared_cpp::XcdrTypeSupport(
-        type_supports, constraints, type_name);
+        type_supports, constraints, endpoint_type_name);
       if (!tsupport) {
         RMW_SET_ERROR_MSG("create_publisher() failed to allocate XcdrTypeSupport");
         return nullptr;
       }
       fastdds_type.reset(tsupport);
-    } else {
-      // FastCDR-backed type support
-      auto callbacks = static_cast<const message_type_support_callbacks_t *>(ts_impl);
-      auto tsupport = new (std::nothrow) MessageTypeSupport_cpp(callbacks);
-      if (!tsupport) {
-        RMW_SET_ERROR_MSG("create_publisher() failed to allocate MessageTypeSupport");
-        return nullptr;
-      }
-      fastdds_type.reset(tsupport);
     }
+  } else if (!fastdds_type) {
+    // FastCDR-backed type support
+    auto callbacks = static_cast<const message_type_support_callbacks_t *>(ts_impl);
+    auto tsupport = new (std::nothrow) MessageTypeSupport_cpp(callbacks);
+    if (!tsupport) {
+      RMW_SET_ERROR_MSG("create_publisher() failed to allocate MessageTypeSupport");
+      return nullptr;
+    }
+    fastdds_type.reset(tsupport);
   }
 
-  if (ReturnCode_t::RETCODE_OK != fastdds_type.register_type(dds_participant)) {
-    RMW_SET_ERROR_MSG("create_publisher() failed to register type");
-    return nullptr;
+  // Constrained endpoints register only when they are the first on their
+  // topic (their own type support is otherwise not registered; the topic uses
+  // the shared registration).  Unconstrained endpoints always register (a
+  // re-registration of an already-registered type is a no-op).
+  if (!is_constrained || register_own_type) {
+    if (ReturnCode_t::RETCODE_OK != fastdds_type.register_type(dds_participant)) {
+      RMW_SET_ERROR_MSG("create_publisher() failed to register type");
+      return nullptr;
+    }
   }
   info->type_support_ = fastdds_type;
 
-  if (!rmw_fastrtps_shared_cpp::register_type_object(type_supports, type_name)) {
-    // Type object registration fails when no introspection typesupport is available
-    // (e.g., XCDR-only experimental messages).  This is non-fatal — the metadata
-    // is used for type hash discovery during matching but isn't required for communication.
-    RCUTILS_LOG_WARN_NAMED(
-      "rmw_fastrtps_cpp",
-      "Failed to register type object for type %s; "
-      "type hash discovery may be degraded (non-fatal)",
-      type_name.c_str());
-    rcutils_reset_error();
+  if (!is_constrained || register_own_type) {
+    if (!rmw_fastrtps_shared_cpp::register_type_object(type_supports, topic_type_name)) {
+      // Type object registration fails when no introspection typesupport is available
+      // (e.g., XCDR-only experimental messages).  This is non-fatal — the metadata
+      // is used for type hash discovery during matching but isn't required for communication.
+      RCUTILS_LOG_WARN_NAMED(
+        "rmw_fastrtps_cpp",
+        "Failed to register type object for type %s; "
+        "type hash discovery may be degraded (non-fatal)",
+        topic_type_name.c_str());
+      rcutils_reset_error();
+    }
   }
 
   /////
@@ -270,7 +302,7 @@ rmw_fastrtps_cpp::create_publisher(
   }
 
   info->topic_ = participant_info->find_or_create_topic(
-    topic_name_mangled, type_name, topic_qos, info->publisher_event_);
+    topic_name_mangled, topic_type_name, topic_qos, info->publisher_event_);
   if (!info->topic_) {
     RMW_SET_ERROR_MSG("create_publisher() failed to create topic");
     return nullptr;

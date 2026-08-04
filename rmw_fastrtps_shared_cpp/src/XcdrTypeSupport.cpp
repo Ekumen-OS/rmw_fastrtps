@@ -16,6 +16,7 @@
 
 #include <cstring>
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "fastcdr/Cdr.h"
@@ -35,6 +36,7 @@
 #include "rosidl_typesupport_xcdr_cpp/message_type_support.hpp"
 
 #include "rmw_fastrtps_shared_cpp/TypeSupport.hpp"
+#include "rmw_fastrtps_shared_cpp/custom_participant_info.hpp"
 
 namespace rmw_fastrtps_shared_cpp
 {
@@ -68,8 +70,14 @@ XcdrTypeSupport::XcdrTypeSupport(
   m_isGetKeyDefined = false;
   setName(type_name.c_str());
 
-  auto_fill_type_object(false);
-  auto_fill_type_information(false);
+  // Auto-fill the XTypes type object / type information so that discovery
+  // carries them (structural type matching).  The generated per-message
+  // register_xcdr_type_object function registers the complete + minimal
+  // TypeObject/TypeIdentifier with the factory before the endpoint is
+  // created, so the auto-fill finds them under the endpoint's type name
+  // (base or unique local name).
+  auto_fill_type_object(true);
+  auto_fill_type_information(true);
 
   // Resolve the base XCDR handle from the typesupport tree.
   base_handle_ = resolve_xcdr_handle(type_supports);
@@ -575,6 +583,93 @@ XcdrTypeSupport::get_expected_data_size() const
   // (after the representation header) is exactly type_size_.
   // type_size_ == 0 means no resolved handle / no typed view possible.
   return static_cast<size_t>(type_size_);
+}
+
+bool
+resolve_constrained_endpoint(
+  CustomParticipantInfo * participant_info,
+  const std::string & topic_name_mangled,
+  const std::string & base_type_name,
+  const rosidl_message_type_constraints_t * constraints,
+  std::string * own_type_name,
+  std::string * topic_type_name,
+  bool * register_own)
+{
+  eprosima::fastdds::dds::TopicDescription * topic =
+    participant_info->participant_->lookup_topicdescription(topic_name_mangled);
+
+  if (nullptr == topic) {
+    // First endpoint on this topic.  Constrained variants get a unique local
+    // type name so different topics can carry different constrained variants
+    // of the same message type without colliding in the participant's type
+    // registry; unconstrained endpoints keep the base name (matching by name
+    // until type objects are registered).
+    if (nullptr == constraints) {
+      *own_type_name = base_type_name;
+    } else {
+      size_t n = ++participant_info->type_name_counter_;
+      *own_type_name = base_type_name + "#" + std::to_string(n);
+    }
+    *topic_type_name = *own_type_name;
+    *register_own = true;
+    return true;
+  }
+
+  // Existing topic: the endpoint shares the registered type for this topic.
+  const std::string topic_type = topic->get_type_name();
+  eprosima::fastdds::dds::TypeSupport registered =
+    participant_info->participant_->find_type(topic_type);
+  if (registered.empty()) {
+    RMW_SET_ERROR_MSG_WITH_FORMAT_STRING(
+      "existing topic %s has no registered type %s",
+      topic_name_mangled.c_str(), topic_type.c_str());
+    return false;
+  }
+
+  // The new endpoint's constraints must be compatible with the registered
+  // type support; otherwise creating it would silently use the wrong bounds.
+  bool compatible = true;
+  auto * xcdr_ts = dynamic_cast<XcdrTypeSupport *>(registered.get());
+  if (nullptr != xcdr_ts) {
+    const rosidl_message_type_support_t * handle = xcdr_ts->get_effective_handle();
+    const rosidl_message_type_constraints_t * baseline =
+      handle ? rosidl_typesupport_xcdr_c_get_constraints(handle) : nullptr;
+    if (nullptr != baseline && nullptr != constraints) {
+      compatible = rosidl_typesupport_xcdr_cpp::compare_constraints(
+        handle, constraints, baseline);
+    } else if (nullptr == baseline && nullptr != constraints) {
+      // A bounded endpoint on an unbounded registered type: the registered
+      // type cannot provide proper loan sizing for the bounded endpoint.
+      compatible = false;
+    }
+    // Registered bounded + unconstrained endpoint: allowed (the endpoint
+    // reuses the bounded registered type; its data must fit the bound).
+    // Both unconstrained: allowed.
+  } else {
+    // Non-XCDR registered type: fall back to the type-name check.
+    compatible = (topic_type == base_type_name);
+  }
+
+  if (!compatible) {
+    RMW_SET_ERROR_MSG_WITH_FORMAT_STRING(
+      "existing topic %s is already registered with incompatible constraints "
+      "for type %s; cannot create another constrained endpoint with different bounds",
+      topic_name_mangled.c_str(), base_type_name.c_str());
+    return false;
+  }
+
+  // Compatible: share the topic's registered type.  The endpoint's own type
+  // support (named `*own_type_name`) is used only for XCDR view logic and is
+  // NOT registered; cleanup unregistering it is a safe no-op.
+  if (nullptr == constraints) {
+    *own_type_name = base_type_name;
+  } else {
+    *own_type_name = base_type_name + "#" +
+      std::to_string(++participant_info->type_name_counter_);
+  }
+  *topic_type_name = topic_type;
+  *register_own = false;
+  return true;
 }
 
 }  // namespace rmw_fastrtps_shared_cpp

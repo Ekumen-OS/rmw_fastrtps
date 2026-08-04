@@ -110,6 +110,13 @@ typedef struct CustomParticipantInfo
   // Protects creation and destruction of topics, readers and writers
   mutable std::mutex entity_creation_mutex_;
 
+  // Monotonic counter used to mint unique local type names for constrained
+  // XCDR endpoints (base_type_name + "#" + counter).  Different topics can
+  // then carry different constrained variants of the same message type
+  // without colliding in the participant's type registry (which is keyed by
+  // type name).  Guarded by entity_creation_mutex_.
+  size_t type_name_counter_{0};
+
   // Flag to establish if the QoS of the DomainParticipant,
   // its DataWriters, and its DataReaders are going
   // to be configured only from an XML file or if
