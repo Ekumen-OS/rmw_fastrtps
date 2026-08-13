@@ -13,6 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdlib>
+#include <cstring>
+
 #include "rmw_fastrtps_shared_cpp/rmw_init.hpp"
 
 #include "rcutils/strdup.h"
@@ -60,7 +63,18 @@ rmw_init_options_init(
     rmw_discovery_options_fini(&(init_options->discovery_options));
     return RMW_RET_BAD_ALLOC;
   }
+  // The serialization backend defaults to FASTCDR, but can be selected via the
+  // RMW_FASTRTPS_SERIALIZATION_BACKEND environment variable ("xcdr" enables the
+  // experimental XCDR-buffers backend with zero-copy support).  This lets
+  // language bindings (e.g. rclpy) enable the XCDR backend without linking
+  // against the fastrtps-specific init-options helper.
   impl->backend = SerializationBackend::FASTCDR;
+  const char * backend_env = std::getenv("RMW_FASTRTPS_SERIALIZATION_BACKEND");
+  if (nullptr != backend_env &&
+    (0 == strcmp(backend_env, "xcdr") || 0 == strcmp(backend_env, "XCDR_BUFFERS")))
+  {
+    impl->backend = SerializationBackend::XCDR_BUFFERS;
+  }
   init_options->impl = impl;
   return RMW_RET_OK;
 }

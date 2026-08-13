@@ -46,7 +46,7 @@ namespace rmw_fastrtps_shared_cpp
 namespace
 {
 
-/// Walk the typesupport tree looking for the XCDR C++ identifier.
+/// Walk the typesupport tree looking for an XCDR handle (any language).
 const rosidl_message_type_support_t *
 resolve_xcdr_handle(const rosidl_message_type_support_t * type_supports)
 {
@@ -54,8 +54,12 @@ resolve_xcdr_handle(const rosidl_message_type_support_t * type_supports)
     return nullptr;
   }
 
+  // Language-agnostic family pattern: matches any XCDR typesupport
+  // implementation (C, C++, CPython), regardless of which language generated
+  // the callbacks.  The dispatch functions perform trailing-'*' prefix
+  // matching via rosidl_runtime_c_typesupport_identifier_matches().
   return get_message_typesupport_handle(
-    type_supports, rosidl_typesupport_xcdr_cpp__identifier);
+    type_supports, "rosidl_typesupport_xcdr*");
 }
 
 }  // anonymous namespace
@@ -90,10 +94,12 @@ XcdrTypeSupport::XcdrTypeSupport(
     constrained_handle_ =
       rosidl_typesupport_xcdr_cpp::create_constrained_message_type_support(
         base_handle_, constraints);
+
   }
 
   // Cache the effective handle (raw pointer, valid while constrained_handle_ lives).
   cached_effective_ = constrained_handle_ ? constrained_handle_.get() : base_handle_;
+
 
   // Compute bounded / plain flags from expected sizes.  get_expected_size
   // reports 0 when the handle has no cached layout (i.e. the size is not
