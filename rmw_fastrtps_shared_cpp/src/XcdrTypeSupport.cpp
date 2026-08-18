@@ -74,13 +74,10 @@ XcdrTypeSupport::XcdrTypeSupport(
   m_isGetKeyDefined = false;
   setName(type_name.c_str());
 
-  // Auto-fill the XTypes type object / type information so that discovery
-  // carries them (structural type matching).  The generated per-message
-  // register_xcdr_type_object function registers the complete + minimal
-  // TypeObject/TypeIdentifier with the factory before the endpoint is
-  // created, so the auto-fill finds them under the endpoint's type name
-  // (base or unique local name).
-  auto_fill_type_object(true);
+  // Auto-fill XTypes type information so that discovery carries
+  // it for type matching, but explicitly drop type object as
+  // type object comparison only works for simple dynamic types.
+  auto_fill_type_object(false);
   auto_fill_type_information(true);
 
   // Resolve the base XCDR handle from the typesupport tree.
@@ -280,7 +277,7 @@ XcdrTypeSupport::deserialize(
 {
   auto ser_data = static_cast<rmw_fastrtps_shared_cpp::SerializedData *>(data);
 
-  if (ser_data->type == FASTRTPS_SERIALIZED_DATA_TYPE_XCDR_LOAN_VIEW) {
+  if (ser_data->type == FASTRTPS_SERIALIZED_DATA_TYPE_ROS_MESSAGE_LOAN) {
     // Non-plain loaned take (unbounded types): cast the payload to a typed
     // view and store it in the holder's data slot.  payload->length is the
     // authoritative received size — a safe upper bound for the parser.  The
@@ -324,7 +321,7 @@ XcdrTypeSupport::deserialize(
 
   if (ser_data->type != FASTRTPS_SERIALIZED_DATA_TYPE_ROS_MESSAGE) {
     RMW_SET_ERROR_MSG(
-      "XcdrTypeSupport only handles ROS_MESSAGE, CDR_BUFFER and XCDR_LOAN_VIEW data types");
+      "XcdrTypeSupport only handles ROS_MESSAGE, CDR_BUFFER and ROS_MESSAGE_LOAN data types");
     return false;
   }
 
@@ -413,7 +410,7 @@ XcdrTypeSupport::createData()
   // Non-plain loan-sample holder: deserialize() casts the payload and stores
   // the typed view pointer in SerializedData::data.
   auto * sd = new rmw_fastrtps_shared_cpp::SerializedData();
-  sd->type = FASTRTPS_SERIALIZED_DATA_TYPE_XCDR_LOAN_VIEW;
+  sd->type = FASTRTPS_SERIALIZED_DATA_TYPE_ROS_MESSAGE_LOAN;
   sd->data = nullptr;
   sd->impl = nullptr;
   return sd;
@@ -597,9 +594,7 @@ resolve_constrained_endpoint(
   const std::string & topic_name_mangled,
   const std::string & base_type_name,
   const rosidl_message_type_constraints_t * constraints,
-  std::string * own_type_name,
-  std::string * topic_type_name,
-  bool * register_own)
+  std::string * topic_type_name)
 {
   eprosima::fastdds::dds::TopicDescription * topic =
     participant_info->participant_->lookup_topicdescription(topic_name_mangled);
@@ -611,13 +606,11 @@ resolve_constrained_endpoint(
     // registry; unconstrained endpoints keep the base name (matching by name
     // until type objects are registered).
     if (nullptr == constraints) {
-      *own_type_name = base_type_name;
+      *topic_type_name = base_type_name;
     } else {
       size_t n = ++participant_info->type_name_counter_;
-      *own_type_name = base_type_name + "#" + std::to_string(n);
+      *topic_type_name = base_type_name + "#" + std::to_string(n);
     }
-    *topic_type_name = *own_type_name;
-    *register_own = true;
     return true;
   }
 
@@ -664,17 +657,8 @@ resolve_constrained_endpoint(
     return false;
   }
 
-  // Compatible: share the topic's registered type.  The endpoint's own type
-  // support (named `*own_type_name`) is used only for XCDR view logic and is
-  // NOT registered; cleanup unregistering it is a safe no-op.
-  if (nullptr == constraints) {
-    *own_type_name = base_type_name;
-  } else {
-    *own_type_name = base_type_name + "#" +
-      std::to_string(++participant_info->type_name_counter_);
-  }
+  // Compatible: share the topic's registered type name.
   *topic_type_name = topic_type;
-  *register_own = false;
   return true;
 }
 

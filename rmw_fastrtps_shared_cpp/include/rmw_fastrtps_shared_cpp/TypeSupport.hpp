@@ -16,6 +16,7 @@
 #define RMW_FASTRTPS_SHARED_CPP__TYPESUPPORT_HPP_
 
 #include <cassert>
+#include <optional>
 #include <string>
 
 #include "fastdds/dds/topic/TopicDataType.hpp"
@@ -40,9 +41,9 @@ enum SerializedDataType
   FASTRTPS_SERIALIZED_DATA_TYPE_CDR_BUFFER,
   FASTRTPS_SERIALIZED_DATA_TYPE_DYNAMIC_MESSAGE,
   FASTRTPS_SERIALIZED_DATA_TYPE_ROS_MESSAGE,
-  // XCDR backend non-plain loan-sample holder: deserialize() casts the
-  // payload and stores the typed view pointer in SerializedData::data.
-  FASTRTPS_SERIALIZED_DATA_TYPE_XCDR_LOAN_VIEW
+  // Non-plain loan-sample holder: deserialize() casts the payload and
+  // stores the typed view pointer in SerializedData::data.
+  FASTRTPS_SERIALIZED_DATA_TYPE_ROS_MESSAGE_LOAN
 };
 
 // Publishers write method will receive a pointer to this struct
@@ -127,7 +128,8 @@ protected:
 RMW_FASTRTPS_SHARED_CPP_PUBLIC
 bool register_type_object(
   const rosidl_message_type_support_t * type_supports,
-  const std::string & type_name);
+  const std::string & type_name,
+  const std::optional<std::string> & registered_type_name = std::nullopt);
 
 }  // namespace rmw_fastrtps_shared_cpp
 

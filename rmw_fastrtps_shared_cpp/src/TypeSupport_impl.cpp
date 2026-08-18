@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <cassert>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -40,6 +41,7 @@
 #include "rosidl_typesupport_introspection_c/message_introspection.h"
 #include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
 #include "rosidl_typesupport_introspection_cpp/field_types.hpp"
+#include "rosidl_typesupport_introspection_cpython/identifier.hpp"
 
 namespace rmw_fastrtps_shared_cpp
 {
@@ -207,15 +209,27 @@ get_type_support_introspection(const rosidl_message_type_support_t * type_suppor
       type_supports,
       rosidl_typesupport_introspection_cpp::typesupport_identifier);
     if (nullptr == type_support) {
-      rcutils_error_string_t error_string = rcutils_get_error_string();
+      rcutils_error_string_t prev_error_string_cpp = rcutils_get_error_string();
       rcutils_reset_error();
-      RMW_SET_ERROR_MSG_WITH_FORMAT_STRING(
-        "Type support not from this implementation. Got:\n"
-        "    %s\n"
-        "    %s\n"
-        "while fetching it",
-        prev_error_string.str, error_string.str);
-      return nullptr;
+
+      // Experimental Python messages are described by the CPython
+      // introspection typesupport (C MessageMembers layout).
+      type_support =
+        get_message_typesupport_handle(
+        type_supports,
+        rosidl_typesupport_introspection_cpython::typesupport_identifier);
+      if (nullptr == type_support) {
+        rcutils_error_string_t error_string = rcutils_get_error_string();
+        rcutils_reset_error();
+        RMW_SET_ERROR_MSG_WITH_FORMAT_STRING(
+          "Type support not from this implementation. Got:\n"
+          "    %s\n"
+          "    %s\n"
+          "    %s\n"
+          "while fetching it",
+          prev_error_string.str, prev_error_string_cpp.str, error_string.str);
+        return nullptr;
+      }
     }
   }
 
@@ -566,7 +580,8 @@ template<typename MembersType>
 inline bool
 add_type_object(
   const void * untype_members,
-  const std::string & type_name)
+  const std::string & type_name,
+  const std::string & registered_type_name)
 {
   const MembersType * members = static_cast<const MembersType *>(untype_members);
   if (!members) {
@@ -589,7 +604,7 @@ add_type_object(
     return false;
   }
 
-  factory->add_type_object(type_name, identifier, type_object);
+  factory->add_type_object(registered_type_name, identifier, type_object);
 
   identifier = GetTypeIdentifier(type_name, false, members);
   if (!identifier) {
@@ -599,14 +614,15 @@ add_type_object(
   if (!type_object) {
     return false;
   }
-  factory->add_type_object(type_name, identifier, type_object);
+  factory->add_type_object(registered_type_name, identifier, type_object);
 
   return true;
 }
 
 bool register_type_object(
   const rosidl_message_type_support_t * type_supports,
-  const std::string & type_name)
+  const std::string & type_name,
+  const std::optional<std::string> & registered_type_name)
 {
   const rosidl_message_type_support_t * type_support_intro =
     get_type_support_introspection(type_supports);
@@ -614,15 +630,27 @@ bool register_type_object(
     return false;
   }
 
+  // The TypeObject embeds the type name, which feeds the equivalence hash used
+  // for cross-participant discovery matching.  Constrained endpoints register
+  // under a suffixed local type name (e.g. "Image_#1") but must embed the base
+  // type name (e.g. "Image_") so the equivalence hash matches the unconstrained
+  // variant of the same message type.  When no registered_type_name is given,
+  // the type is registered under its own (embedded) name.
+  const std::string & registered_name =
+    registered_type_name.has_value() ? *registered_type_name : type_name;
+
   bool ret = false;
   if (type_support_intro->typesupport_identifier ==
-    rosidl_typesupport_introspection_c__identifier)
+    rosidl_typesupport_introspection_c__identifier ||
+    // Experimental Python messages use the C MessageMembers layout.
+    type_support_intro->typesupport_identifier ==
+    rosidl_typesupport_introspection_cpython::typesupport_identifier)
   {
     ret = add_type_object<rosidl_typesupport_introspection_c__MessageMembers>(
-      type_support_intro->data, type_name);
+      type_support_intro->data, type_name, registered_name);
   } else {
     ret = add_type_object<rosidl_typesupport_introspection_cpp::MessageMembers>(
-      type_support_intro->data, type_name);
+      type_support_intro->data, type_name, registered_name);
   }
 
   return ret;

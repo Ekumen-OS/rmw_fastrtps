@@ -43,6 +43,7 @@ find_package(rmw_dds_common REQUIRED)
 find_package(rosidl_runtime_c REQUIRED)
 find_package(rosidl_typesupport_introspection_c REQUIRED)
 find_package(rosidl_typesupport_introspection_cpp REQUIRED)
+find_package(rosidl_typesupport_introspection_cpython REQUIRED)
 find_package(rosidl_typesupport_xcdr_c REQUIRED)
 find_package(rosidl_typesupport_xcdr_cpp REQUIRED)
 find_package(tracetools REQUIRED)
@@ -119,6 +120,7 @@ target_link_libraries(rmw_fastrtps_shared_cpp PUBLIC
 target_link_libraries(rmw_fastrtps_shared_cpp PRIVATE
   rosidl_typesupport_introspection_c::rosidl_typesupport_introspection_c
   rosidl_typesupport_introspection_cpp::rosidl_typesupport_introspection_cpp
+  rosidl_typesupport_introspection_cpython::rosidl_typesupport_introspection_cpython
   rosidl_typesupport_xcdr_c::rosidl_typesupport_xcdr_c
   rosidl_typesupport_xcdr_cpp::rosidl_typesupport_xcdr_cpp
   tracetools::tracetools

@@ -46,7 +46,7 @@ namespace
  * prefixes and never reads trailing padding.
  *
  * Unbounded XCDR types are non-plain, so the loan element is a
- * SerializedData holder tagged with FASTRTPS_SERIALIZED_DATA_TYPE_XCDR_LOAN_VIEW
+ * SerializedData holder tagged with FASTRTPS_SERIALIZED_DATA_TYPE_ROS_MESSAGE_LOAN
  * whose data slot was set by the typesupport's deserialize() to a typed view
  * of the payload (the cast happened there, with the authoritative
  * payload->length).
@@ -133,7 +133,7 @@ xcdr_maybe_view_loaned_message(
     // -- Unbounded (non-plain) loan: the typesupport's deserialize cast the
     //    payload into the holder's data slot. --
     auto * holder = static_cast<rmw_fastrtps_shared_cpp::SerializedData *>(*loaned_message);
-    if (holder->type != rmw_fastrtps_shared_cpp::FASTRTPS_SERIALIZED_DATA_TYPE_XCDR_LOAN_VIEW) {
+    if (holder->type != rmw_fastrtps_shared_cpp::FASTRTPS_SERIALIZED_DATA_TYPE_ROS_MESSAGE_LOAN) {
       RMW_SET_ERROR_MSG("loaned sample is not an XCDR view holder");
       return RMW_RET_ERROR;
     }
