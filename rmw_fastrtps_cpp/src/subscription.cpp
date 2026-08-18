@@ -615,8 +615,9 @@ __create_subscription(
     // guaranteed by resolve_constrained_endpoint); otherwise create a new
     // instance carrying the constraints and the topic's type name.
     if (!fastdds_type) {
+      constexpr bool kAssumeBounded = true;  // always bounded on the receiving end
       auto tsupport = new (std::nothrow) rmw_fastrtps_shared_cpp::XcdrTypeSupport(
-        type_supports, constraints, topic_type_name);
+        type_supports, constraints, topic_type_name, kAssumeBounded);
       if (!tsupport) {
         RMW_SET_ERROR_MSG("create_subscription() failed to allocate XcdrTypeSupport");
         return nullptr;
@@ -735,9 +736,9 @@ __create_subscription(
 
   if (!participant_info->leave_middleware_default_qos) {
     reader_qos.endpoint().history_memory_policy =
-      eprosima::fastrtps::rtps::PREALLOCATED_WITH_REALLOC_MEMORY_MODE;
+      eprosima::fastrtps::rtps::DYNAMIC_REUSABLE_MEMORY_MODE;
 
-    reader_qos.data_sharing().off();
+    // reader_qos.data_sharing().off();
   }
 
   if (!get_datareader_qos(

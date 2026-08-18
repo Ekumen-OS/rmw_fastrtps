@@ -69,7 +69,7 @@ resolve_xcdr_handle(const rosidl_message_type_support_t * type_supports)
 XcdrTypeSupport::XcdrTypeSupport(
   const rosidl_message_type_support_t * type_supports,
   const rosidl_message_type_constraints_t * constraints,
-  const std::string & type_name)
+  const std::string & type_name, bool assume_bounded)
 {
   m_isGetKeyDefined = false;
   setName(type_name.c_str());
@@ -97,7 +97,6 @@ XcdrTypeSupport::XcdrTypeSupport(
   // Cache the effective handle (raw pointer, valid while constrained_handle_ lives).
   cached_effective_ = constrained_handle_ ? constrained_handle_.get() : base_handle_;
 
-
   // Compute bounded / plain flags from expected sizes.  get_expected_size
   // reports 0 when the handle has no cached layout (i.e. the size is not
   // statically known), so a non-zero result means the layout is fixed.
@@ -106,7 +105,8 @@ XcdrTypeSupport::XcdrTypeSupport(
   //   expected size from its BASE handle.
   // - An UNBOUNDED type only becomes bounded via constraints; its
   //   constrained handle carries a cached layout with a known size.
-  bounded_ = false;
+  plain_ = false;
+  bounded_ = assume_bounded;
   type_size_ = 0;
 
   if (nullptr != base_handle_) {
@@ -115,28 +115,29 @@ XcdrTypeSupport::XcdrTypeSupport(
         base_handle_, &base_size) && 0 < base_size)
     {
       // Inherently fixed layout.
+      plain_ = true;
       bounded_ = true;
       type_size_ = static_cast<uint32_t>(base_size);
+    } else if (nullptr != constrained_handle_) {
+      size_t constrained_size = 0;
+      if (RCUTILS_RET_OK == rosidl_typesupport_xcdr_cpp::get_expected_message_size(
+          constrained_handle_.get(), &constrained_size) && 0 < constrained_size)
+      {
+        // Bounded via constraints.
+        plain_ = true;
+        bounded_ = true;
+        type_size_ = static_cast<uint32_t>(constrained_size);
+      }
     }
   }
 
-  if (!bounded_ && nullptr != constrained_handle_) {
-    size_t constrained_size = 0;
-    if (RCUTILS_RET_OK == rosidl_typesupport_xcdr_cpp::get_expected_message_size(
-        constrained_handle_.get(), &constrained_size) && 0 < constrained_size)
-    {
-      bounded_ = true;
-      type_size_ = static_cast<uint32_t>(constrained_size);
-    }
-  }
-
-  if (0 == type_size_) {
-    // Unbounded and unconstrained (or unresolved): use a generous default so
-    // the DataReader can provide loaned samples of a reasonable size.  The
-    // reader is non-plain, so the pool keeps PREALLOCATED_WITH_REALLOC and
-    // this value only sizes the initial loan allocation.
-    type_size_ = 4096;
-  }
+  // if (0 == type_size_) {
+  //   // Unbounded and unconstrained (or unresolved): use a generous default so
+  //   // the DataReader can provide loaned samples of a reasonable size.  The
+  //   // reader is non-plain, so the pool keeps PREALLOCATED_WITH_REALLOC and
+  //   // this value only sizes the initial loan allocation.
+  //   type_size_ = 4096;
+  // }
 
   // m_typeSize includes only the representation header.  The wire layout is
   // [repr header 4B][XCDR block (its own CDR header + fields)]; the reader
@@ -518,19 +519,14 @@ XcdrTypeSupport::is_bounded() const
 bool
 XcdrTypeSupport::is_plain() const
 {
-  // Pose as plain only when bounded.  This unlocks DataWriter::loan_sample
-  // for loaned publish, and on the reader it makes Fast DDS loan raw
-  // payloads (pointer arithmetic, no deserialization); the loaned-take path
-  // casts with the constrained allocation as a safe parser bound.
-  return bounded_;
+  return plain_;
 }
 
 bool
 XcdrTypeSupport::is_plain(
-  eprosima::fastdds::dds::DataRepresentationId_t rep) const
+  eprosima::fastdds::dds::DataRepresentationId_t) const
 {
-  // XCDR_BUFFERS is XCDRv1 (PLAIN_CDR) only; XCDR2 is never plain.
-  return bounded_ && rep == eprosima::fastdds::dds::XCDR_DATA_REPRESENTATION;
+  return plain_;
 }
 
 bool

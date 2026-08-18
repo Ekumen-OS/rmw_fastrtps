@@ -81,7 +81,8 @@ public:
   XcdrTypeSupport(
     const rosidl_message_type_support_t * type_supports,
     const rosidl_message_type_constraints_t * constraints,
-    const std::string & type_name);
+    const std::string & type_name,
+    bool bounded = false);
 
   RMW_FASTRTPS_SHARED_CPP_PUBLIC
   ~XcdrTypeSupport() override;
@@ -249,8 +250,11 @@ private:
   /// Type size hint.  0 means unbounded/unresolved.
   uint32_t type_size_{0};
 
-  /// Whether this type is fully bounded (fixed layout known, from base or constraints).
+  /// Whether this type is fully bounded (layout known or deducible).
   bool bounded_{false};
+
+  /// Whether this type is plain (fixed layout).
+  bool plain_{false};
 };
 
 /// Resolve the type name and registration strategy for a constrained XCDR

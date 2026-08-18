@@ -593,9 +593,9 @@ __init_subscription_for_loans(
         rmw_fastrtps_shared_cpp::XcdrTypeSupport::get_expected_data_size_for_handle(
         xcdr_ts->get_effective_handle());
       subscription->can_loan_messages =
-        expected >= kLoanedTakeMinPayload && xcdr_ts->supports_loans();
+        (expected == 0 || expected >= kLoanedTakeMinPayload) && xcdr_ts->supports_loans();
     } else {
-      subscription->can_loan_messages = xcdr_ts->supports_loans();
+      subscription->can_loan_messages = false;
     }
   } else {
     subscription->can_loan_messages = type_ptr->is_plain();
