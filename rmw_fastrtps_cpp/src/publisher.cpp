@@ -331,7 +331,7 @@ rmw_fastrtps_cpp::create_publisher(
     }
 
     writer_qos.endpoint().history_memory_policy =
-      eprosima::fastrtps::rtps::PREALLOCATED_WITH_REALLOC_MEMORY_MODE;
+      eprosima::fastrtps::rtps::DYNAMIC_REUSABLE_MEMORY_MODE;
 
     // writer_qos.data_sharing().off();
   }

@@ -29,7 +29,6 @@
   <build_depend>rosidl_runtime_c</build_depend>
   <build_depend>rosidl_typesupport_introspection_c</build_depend>
   <build_depend>rosidl_typesupport_introspection_cpp</build_depend>
-  <build_depend>rosidl_typesupport_introspection_cpython</build_depend>
   <build_depend>rosidl_typesupport_xcdr_c</build_depend>
   <build_depend>rosidl_typesupport_xcdr_cpp</build_depend>
   <build_depend>tracetools</build_depend>
@@ -44,7 +43,6 @@
   <build_export_depend>rmw_dds_common</build_export_depend>
   <build_export_depend>rosidl_typesupport_introspection_c</build_export_depend>
   <build_export_depend>rosidl_typesupport_introspection_cpp</build_export_depend>
-  <build_export_depend>rosidl_typesupport_introspection_cpython</build_export_depend>
   <build_export_depend>rosidl_typesupport_xcdr_c</build_export_depend>
   <build_export_depend>rosidl_typesupport_xcdr_cpp</build_export_depend>
   <build_export_depend>tracetools</build_export_depend>

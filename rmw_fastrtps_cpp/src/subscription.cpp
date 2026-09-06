@@ -736,7 +736,7 @@ __create_subscription(
 
   if (!participant_info->leave_middleware_default_qos) {
     reader_qos.endpoint().history_memory_policy =
-      eprosima::fastrtps::rtps::DYNAMIC_REUSABLE_MEMORY_MODE;
+        eprosima::fastrtps::rtps::DYNAMIC_REUSABLE_MEMORY_MODE;
 
     // reader_qos.data_sharing().off();
   }

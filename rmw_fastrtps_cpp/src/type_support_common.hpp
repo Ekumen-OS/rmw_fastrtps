@@ -85,11 +85,11 @@ _create_type_name(
 /**
  * Language-agnostic: asks the dispatch function for the first typesupport
  * whose identifier matches the "rosidl_typesupport_xcdr*" family pattern.
- * The dispatch function (in rosidl_typesupport_c/_cpp/_cpython) performs
- * prefix matching via rosidl_runtime_c_typesupport_identifier_matches, so no
- * specific language identifier (C, C++, CPython) is hardcoded here — the set
- * of supported languages stays open (e.g. experimental Python messages backed
- * by rosidl_typesupport_xcdr_cpython).
+ * The dispatch function (in rosidl_typesupport_c/_cpp) performs prefix
+ * matching via rosidl_runtime_c_typesupport_identifier_matches, so no
+ * specific language identifier (C, C++) is hardcoded here — the set of
+ * supported languages stays open (e.g. experimental Python messages backed
+ * by the C++ typesupport).
  */
 inline const rosidl_message_type_support_t *
 try_get_xcdr_message_typesupport(
