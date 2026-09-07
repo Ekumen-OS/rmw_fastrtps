@@ -13,19 +13,24 @@
 // limitations under the License.
 
 #include <limits>
+#include <string>
 #include <vector>
 
 #include "rcutils/logging_macros.h"
 
 #include "rmw_fastrtps_shared_cpp/qos.hpp"
 
+#include "fastdds/dds/publisher/Publisher.hpp"
 #include "fastdds/dds/publisher/qos/DataWriterQos.hpp"
+#include "fastdds/dds/subscriber/Subscriber.hpp"
 #include "fastdds/dds/subscriber/qos/DataReaderQos.hpp"
 #include "fastdds/dds/topic/qos/TopicQos.hpp"
 
 #include "rmw/error_handling.h"
 
 #include "rmw_dds_common/qos.hpp"
+
+#include "rmw_fastrtps_shared_cpp/custom_participant_info.hpp"
 
 #include "rosidl_runtime_c/type_hash.h"
 
@@ -263,3 +268,40 @@ template
 void dds_qos_to_rmw_qos<eprosima::fastdds::dds::DataReaderQos>(
   const eprosima::fastdds::dds::DataReaderQos & dds_qos,
   rmw_qos_profile_t * qos);
+
+namespace rmw_fastrtps_shared_cpp
+{
+
+bool
+xml_qos_grants_dynamic_datasharing(
+  CustomParticipantInfo * participant_info,
+  const std::string & topic_name)
+{
+  if (nullptr == participant_info || nullptr == participant_info->publisher_ ||
+    nullptr == participant_info->subscriber_)
+  {
+    return false;
+  }
+  // Without XML QoS override the middleware forces OFF + PREALLOCATED, so
+  // whatever the profiles say is not what the endpoints will use.
+  if (!participant_info->leave_middleware_default_qos) {
+    return false;
+  }
+  eprosima::fastdds::dds::DataWriterQos writer_qos =
+    participant_info->publisher_->get_default_datawriter_qos();
+  participant_info->publisher_->get_datawriter_qos_from_profile(topic_name, writer_qos);
+  eprosima::fastdds::dds::DataReaderQos reader_qos =
+    participant_info->subscriber_->get_default_datareader_qos();
+  participant_info->subscriber_->get_datareader_qos_from_profile(topic_name, reader_qos);
+  const bool writer_ok =
+    eprosima::fastdds::dds::AUTO == writer_qos.data_sharing().kind() &&
+    eprosima::fastrtps::rtps::DYNAMIC_REUSABLE_MEMORY_MODE ==
+    writer_qos.endpoint().history_memory_policy;
+  const bool reader_ok =
+    eprosima::fastdds::dds::AUTO == reader_qos.data_sharing().kind() &&
+    eprosima::fastrtps::rtps::DYNAMIC_REUSABLE_MEMORY_MODE ==
+    reader_qos.endpoint().history_memory_policy;
+  return writer_ok && reader_ok;
+}
+
+}  // namespace rmw_fastrtps_shared_cpp

@@ -16,6 +16,8 @@
 #ifndef RMW_FASTRTPS_SHARED_CPP__QOS_HPP_
 #define RMW_FASTRTPS_SHARED_CPP__QOS_HPP_
 
+#include <string>
+
 #include <fastdds/dds/core/policy/QosPolicies.hpp>
 #include <fastdds/dds/publisher/qos/DataWriterQos.hpp>
 #include <fastdds/dds/subscriber/qos/DataReaderQos.hpp>
@@ -28,6 +30,11 @@
 #include "rmw_fastrtps_shared_cpp/visibility_control.h"
 
 #include "rosidl_runtime_c/type_hash.h"
+
+// CustomParticipantInfo is a C-style struct typedef in the global namespace
+// (see custom_participant_info.hpp); forward-declare it the same way so the
+// declaration below matches the real type.
+typedef struct CustomParticipantInfo CustomParticipantInfo;
 
 RMW_FASTRTPS_SHARED_CPP_PUBLIC
 bool
@@ -52,6 +59,30 @@ bool
 get_topic_qos(
   const rmw_qos_profile_t & qos_policies,
   eprosima::fastdds::dds::TopicQos & topic_qos);
+
+namespace rmw_fastrtps_shared_cpp
+{
+
+/// Check whether XML profiles grant dynamic data sharing for a topic.
+/**
+ * Loads the data-writer and data-reader QoS for topic_name from the
+ * participant's XML profiles (topic-scoped profile over default profile)
+ * and reports whether both carry data-sharing AUTOMATIC with a
+ * DYNAMIC_REUSABLE history memory policy.
+ *
+ * Used to decide whether an unconstrained XCDR type may pose as bounded:
+ * only an explicit XML override granting DYNAMIC_REUSABLE on both ends
+ * makes that safe. RMW must also leave the middleware QoS untouched
+ * (RMW_FASTRTPS_USE_QOS_FROM_XML=1), otherwise the inspected QoS is not
+ * what the endpoints will use.
+ */
+RMW_FASTRTPS_SHARED_CPP_PUBLIC
+bool
+xml_qos_grants_dynamic_datasharing(
+  CustomParticipantInfo * participant_info,
+  const std::string & topic_name);
+
+}  // namespace rmw_fastrtps_shared_cpp
 
 RMW_FASTRTPS_SHARED_CPP_PUBLIC
 rmw_time_t
