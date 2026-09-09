@@ -38,6 +38,7 @@
 
 namespace rmw_fastrtps_shared_cpp
 {
+
 rmw_ret_t
 __rmw_publish(
   const char * identifier,

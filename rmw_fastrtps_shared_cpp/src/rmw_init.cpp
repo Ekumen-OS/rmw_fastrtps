@@ -60,7 +60,8 @@ rmw_init_options_init(
     allocator.allocate(sizeof(rmw_init_options_impl_s), allocator.state));
   if (nullptr == impl) {
     RMW_SET_ERROR_MSG("failed to allocate rmw_init_options_impl_s");
-    rmw_discovery_options_fini(&(init_options->discovery_options));
+    rmw_ret_t ret = rmw_discovery_options_fini(&(init_options->discovery_options));
+    (void)ret;
     return RMW_RET_BAD_ALLOC;
   }
   // The serialization backend defaults to FASTCDR, but can be selected via the
@@ -133,7 +134,8 @@ rmw_init_options_copy(
     if (nullptr == dst_impl) {
       allocator.deallocate(tmp.enclave, allocator.state);
       rmw_security_options_fini(&tmp.security_options, &allocator);
-      rmw_discovery_options_fini(&tmp.discovery_options);
+      rmw_ret_t fini_ret = rmw_discovery_options_fini(&tmp.discovery_options);
+      (void)fini_ret;
       RMW_SET_ERROR_MSG("failed to allocate rmw_init_options_impl_s copy");
       return RMW_RET_BAD_ALLOC;
     }
